@@ -36,7 +36,6 @@ def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agn
     box_corner[:, :, 2] = prediction[:, :, 0] + prediction[:, :, 2] / 2
     box_corner[:, :, 3] = prediction[:, :, 1] + prediction[:, :, 3] / 2
     prediction[:, :, :4] = box_corner[:, :, :4]
-
     output = [None for _ in range(len(prediction))]
     for i, image_pred in enumerate(prediction):
 
@@ -45,10 +44,22 @@ def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agn
             continue
         # Get score and class with highest confidence
         class_conf, class_pred = torch.max(image_pred[:, 5: 5 + num_classes], 1, keepdim=True)
+        keypoint_conf_k1, keypoint_class_pre_k1 = torch.max(
+            image_pred[:, (5 + num_classes + 8):(5 + num_classes + 10)], 1, keepdim=True)
+
+        keypoint_conf_k2, keypoint_class_pre_k2 = torch.max(
+            image_pred[:, 5 + num_classes + 10:5 + num_classes + 12],  1, keepdim=True)
+
+        keypoint_conf_k3, keypoint_class_pre_k3 = torch.max(
+            image_pred[:, 5 + num_classes + 12:5 + num_classes + 14], 1, keepdim=True)
+
+        keypoint_conf_k4, keypoint_class_pre_k4 = torch.max(
+            image_pred[:, 5 + num_classes + 14:5 + num_classes + 16], 1, keepdim=True)
 
         conf_mask = (image_pred[:, 4] * class_conf.squeeze() >= conf_thre).squeeze()
         # Detections ordered as (x1, y1, x2, y2, obj_conf, class_conf, class_pred)
-        detections = torch.cat((image_pred[:, :5], class_conf, class_pred.float()), 1)
+        detections = torch.cat((image_pred[:, :5], class_conf, class_pred.float(
+        ), image_pred[:, 5 + num_classes:5 + num_classes + 8], keypoint_class_pre_k1, keypoint_class_pre_k2, keypoint_class_pre_k3, keypoint_class_pre_k4), 1)
         detections = detections[conf_mask]
         if not detections.size(0):
             continue
@@ -126,15 +137,17 @@ def xyxy2xywh(bboxes):
     bboxes[:, 3] = bboxes[:, 3] - bboxes[:, 1]
     return bboxes
 
+
 def adjust_keypoint_ann(keypoints, scale_ratio, padw, padh, w_max, h_max):
     filtered_flag = ((keypoints[:, ::3] * scale_ratio + padw) < 0) \
-                  + ((keypoints[:, ::3] * scale_ratio + padw) > w_max) \
-                  + ((keypoints[:, 1::3] * scale_ratio + padh) > h_max) \
-                  + ((keypoints[:, 1::3] * scale_ratio + padh) < 0) 
+        + ((keypoints[:, ::3] * scale_ratio + padw) > w_max) \
+        + ((keypoints[:, 1::3] * scale_ratio + padh) > h_max) \
+        + ((keypoints[:, 1::3] * scale_ratio + padh) < 0)
     keypoints[:, 2::3][filtered_flag] = 0
     keypoints[:, ::3] = keypoints[:, ::3] * scale_ratio
     keypoints[:, 1::3] = keypoints[:, 1::3] * scale_ratio
     return keypoints
+
 
 def xyxy2cxcywh(bboxes):
     bboxes[:, 2] = bboxes[:, 2] - bboxes[:, 0]

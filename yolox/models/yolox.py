@@ -2,6 +2,8 @@
 # -*- encoding: utf-8 -*-
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 
+from loguru import logger
+from numpy.core.fromnumeric import std
 import torch.nn as nn
 
 from .yolo_head import YOLOXHead
@@ -32,30 +34,31 @@ class YOLOX(nn.Module):
         if self.training:
             assert targets is not None
             loss, iou_loss, conf_loss, cls_loss, l1_loss,  loss_keypoint_cls_k1, \
-            loss_keypoint_cls_k2, \
-            loss_keypoint_cls_k3, \
-            loss_keypoint_cls_k4, \
-            loss_peypoint_reg_k1, \
-            loss_peypoint_reg_k2, \
-            loss_peypoint_reg_k3, \
-            loss_peypoint_reg_k4, \
-            num_fg,= self.head(
-                fpn_outs, targets, x
-            )
+                loss_keypoint_cls_k2, \
+                loss_keypoint_cls_k3, \
+                loss_keypoint_cls_k4, \
+                loss_peypoint_reg_k1, \
+                loss_peypoint_reg_k2, \
+                loss_peypoint_reg_k3, \
+                loss_peypoint_reg_k4, \
+                num_fg = self.head(
+                    fpn_outs, targets, x
+                )
             outputs = {
                 "total_loss": loss,
                 "iou_loss": iou_loss,
                 "l1_loss": l1_loss,
                 "conf_loss": conf_loss,
                 "cls_loss": cls_loss,
-                "loss_peypoint_reg_k1" : loss_peypoint_reg_k1,
-                "loss_peypoint_reg_k2" : loss_peypoint_reg_k2,
-                "loss_peypoint_reg_k3" : loss_peypoint_reg_k3,
-                "loss_peypoint_reg_k4" : loss_peypoint_reg_k4,
-                "loss_keypoint_cls_k1" : loss_keypoint_cls_k1,
-                "loss_keypoint_cls_k2" : loss_keypoint_cls_k2,
-                "loss_keypoint_cls_k3" : loss_keypoint_cls_k3,
-                "loss_keypoint_cls_k4" : loss_keypoint_cls_k4,
+                "loss_peypoint_reg_k1": loss_peypoint_reg_k1,
+                "loss_peypoint_reg_k2": loss_peypoint_reg_k2,
+                "loss_peypoint_reg_k3": loss_peypoint_reg_k3,
+                "loss_peypoint_reg_k4": loss_peypoint_reg_k4,
+                "loss_keypoint_cls_k1": loss_keypoint_cls_k1,
+                "loss_keypoint_cls_k2": loss_keypoint_cls_k2,
+                "loss_keypoint_cls_k3": loss_keypoint_cls_k3,
+                "loss_keypoint_cls_k4": loss_keypoint_cls_k4,
+                # "head_weight": head_weight,
                 "num_fg": num_fg,
             }
         else:

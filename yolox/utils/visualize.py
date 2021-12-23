@@ -8,7 +8,7 @@ import numpy as np
 __all__ = ["vis"]
 
 
-def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
+def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None, keypoint_reg=None, keypoint_cls=None):
 
     for i in range(len(boxes)):
         box = boxes[i]
@@ -20,6 +20,8 @@ def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
         y0 = int(box[1])
         x1 = int(box[2])
         y1 = int(box[3])
+        keypoint_pts = []
+        keypoint_pts_v = []
 
         color = (_COLORS[cls_id] * 255).astype(np.uint8).tolist()
         text = '{}:{:.1f}%'.format(class_names[cls_id], score * 100)
@@ -38,6 +40,42 @@ def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
             -1
         )
         cv2.putText(img, text, (x0, y0 + txt_size[1]), font, 0.4, txt_color, thickness=1)
+        if keypoint_reg is not None and keypoint_cls is not None:
+            k1_x = int(keypoint_reg[i][0])
+            k1_y = int(keypoint_reg[i][1])
+            k2_x = int(keypoint_reg[i][2])
+            k2_y = int(keypoint_reg[i][3])
+            k3_x = int(keypoint_reg[i][4])
+            k3_y = int(keypoint_reg[i][5])
+            k4_x = int(keypoint_reg[i][6])
+            k4_y = int(keypoint_reg[i][7])
+            keypoint_pts.append((k1_x, k1_y))
+            keypoint_pts.append((k2_x, k2_y))
+            keypoint_pts.append((k3_x, k3_y))
+            keypoint_pts.append((k4_x, k4_y))
+
+            k1_v = keypoint_cls[i][0]
+            k2_v = keypoint_cls[i][1]
+            k3_v = keypoint_cls[i][2]
+            k4_v = keypoint_cls[i][3]
+            keypoint_pts_v.append(k1_v)
+            keypoint_pts_v.append(k2_v)
+            keypoint_pts_v.append(k3_v)
+            keypoint_pts_v.append(k4_v)
+            for i in range(4):
+                if keypoint_pts_v[i] == 1:
+                    # print(keypoint_pts[i])
+                    # print(keypoint_pts[i])
+                    cv2.circle(img, keypoint_pts[i], 2, (0, 15, 255), 3)
+                    cv2.putText(
+                        img, str(i), (keypoint_pts[i][0] + 5, keypoint_pts[i][1] + 5), font, 0.5,  (0, 15, 255), 2)
+                # else:
+                #     cv2.circle(img, keypoint_pts[i], 2, (0, 255, 15), 3)
+                #     cv2.putText(
+                #         img, str(i), (keypoint_pts[i][0] + 5, keypoint_pts[i][1] + 5), font, 0.5,  (0, 255, 15), 2)
+
+                # cv2.imshow("show_keypoint", img)
+                # cv2.waitKey(0)
 
     return img
 

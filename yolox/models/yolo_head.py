@@ -34,6 +34,8 @@ class YOLOXHead(nn.Module):
 
         self.n_anchors = 1
         self.num_classes = num_classes
+        self.num_head = 12
+        # self.eta = nn.Parameter(torch.ones(self.num_head))
         self.decode_in_inference = True  # for deploy, set to False
 
         self.cls_convs = nn.ModuleList()
@@ -53,6 +55,7 @@ class YOLOXHead(nn.Module):
         self.keypoint_reg_k4 = nn.ModuleList()
         self.stems = nn.ModuleList()
         Conv = DWConv if depthwise else BaseConv
+        self.tanh = nn.Tanh()
 
         for i in range(len(in_channels)):
             self.stems.append(
@@ -302,6 +305,11 @@ class YOLOXHead(nn.Module):
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
+    # def uncertainty_loss(self, losses):
+    #     assert len(losses) == len(self.eta)
+    #     total_loss = torch.Tensor(losses) * torch.exp(-self.eta) * 0.5 + self.eta
+    #     return total_loss.sum()
+
     def forward(self, xin, labels=None, imgs=None):
         outputs = []
         origin_preds = []
@@ -336,6 +344,11 @@ class YOLOXHead(nn.Module):
             keypoint_reg_k2_output = self.keypoint_reg_k2[k](keypoint_reg_feat)
             keypoint_reg_k3_output = self.keypoint_reg_k3[k](keypoint_reg_feat)
             keypoint_reg_k4_output = self.keypoint_reg_k4[k](keypoint_reg_feat)
+
+            # keypoint_reg_k1_output = self.tanh(keypoint_reg_k1_output)
+            # keypoint_reg_k2_output = self.tanh(keypoint_reg_k2_output)
+            # keypoint_reg_k3_output = self.tanh(keypoint_reg_k3_output)
+            # keypoint_reg_k4_output = self.tanh(keypoint_reg_k4_output)
 
             if self.training:
                 output = torch.cat([reg_output, obj_output, cls_output,
@@ -424,7 +437,8 @@ class YOLOXHead(nn.Module):
         output[..., :2] = (output[..., :2] + grid) * stride
         output[..., 2:4] = torch.exp(output[..., 2:4]) * stride
         # print("-------------------------------")
-        # output[..., bbox_ch:bbox_ch+8] = (output[..., bbox_ch:bbox_ch+8] + grid.repeat(1,1,4)) * stride
+        # output[..., bbox_ch:bbox_ch +
+        #        8] = (output[..., bbox_ch:bbox_ch+8] + grid.repeat(1, 1, 4)) * stride
         return output, grid
 
     def decode_outputs(self, outputs, dtype):
@@ -442,8 +456,30 @@ class YOLOXHead(nn.Module):
         strides = torch.cat(strides, dim=1).type(dtype)
         outputs[..., :2] = (outputs[..., :2] + grids) * strides
         outputs[..., 2:4] = torch.exp(outputs[..., 2:4]) * strides
-        outputs[..., bbox_ch:bbox_ch +
-                8] = (outputs[..., bbox_ch:bbox_ch+8] + grids.repeat(1, 1, 4)) * strides
+        # outputs[..., bbox_ch:bbox_ch +
+        #         8] = (outputs[..., bbox_ch:bbox_ch+8] + grids.repeat(1, 1, 4)) * strides
+        outputs[..., bbox_ch:bbox_ch + 8] = torch.sign(outputs[..., bbox_ch:bbox_ch+8]) * ((torch.exp(
+            torch.abs(outputs[..., bbox_ch:bbox_ch+8])) - 1)) * strides + outputs[..., 0:2].repeat(1, 1, 4)
+
+        # logger.info(
+        #     "outputs[..., bbox_ch:bbox_ch + 8:2] shape: {}".format(outputs[..., bbox_ch:bbox_ch + 8:2].shape))
+        # logger.info('outputs[..., 0] shape: {}'.format(outputs[..., 0].shape))
+        # logger.info('grids shape: {}'.format(grids.shape))
+        # logger.info('grids.repeat(1, 1, 4) shape: {}'.format(grids.repeat(1, 1, 4).shape))
+        # logger.info('outputs[..., 0].repeat(1, 1, 4) shape: {}'.format(
+        #     outputs[..., 0].repeat(1, 1, 4).shape))
+        # logger.info('outputs[..., 2] / 2 shape: {}'.format((outputs[..., 2] / 2).shape))
+
+        # outputs[..., bbox_ch:bbox_ch + 8] = outputs[..., bbox_ch:bbox_ch + 8] * \
+        #     ((outputs[..., 2:4] / 2).repeat(1, 1, 4)) + \
+        #     (outputs[..., 0:2].repeat(1, 1, 4))
+
+        # outputs[..., bbox_ch:bbox_ch + 8] = outputs[..., bbox_ch:bbox_ch + 8] * \
+        #     ((outputs[..., 2:4] / 2).repeat(1, 1, 4)) + \
+        #     (outputs[..., 0:2].repeat(1, 1, 4))
+
+        # outputs[..., bbox_ch + 1:bbox_ch +
+        #         8:2] = outputs[..., bbox_ch + 1:bbox_ch + 8:2] * (outputs[..., 3] / 2) + outputs[..., 1]
         return outputs
 
     def get_losses(
@@ -617,6 +653,7 @@ class YOLOXHead(nn.Module):
                     expanded_strides[0][fg_mask],
                     x_shifts=x_shifts[0][fg_mask],
                     y_shifts=y_shifts[0][fg_mask],
+                    bbox=reg_target
                 )
                 keypoint_reg_target_k2 = self.get_keypoint_reg_target(
                     outputs.new_zeros((num_fg_img, 2)),
@@ -624,6 +661,9 @@ class YOLOXHead(nn.Module):
                     expanded_strides[0][fg_mask],
                     x_shifts=x_shifts[0][fg_mask],
                     y_shifts=y_shifts[0][fg_mask],
+                    bbox=reg_target
+
+
                 )
                 keypoint_reg_target_k3 = self.get_keypoint_reg_target(
                     outputs.new_zeros((num_fg_img, 2)),
@@ -631,6 +671,9 @@ class YOLOXHead(nn.Module):
                     expanded_strides[0][fg_mask],
                     x_shifts=x_shifts[0][fg_mask],
                     y_shifts=y_shifts[0][fg_mask],
+                    bbox=reg_target
+
+
                 )
                 keypoint_reg_target_k4 = self.get_keypoint_reg_target(
                     outputs.new_zeros((num_fg_img, 2)),
@@ -638,6 +681,8 @@ class YOLOXHead(nn.Module):
                     expanded_strides[0][fg_mask],
                     x_shifts=x_shifts[0][fg_mask],
                     y_shifts=y_shifts[0][fg_mask],
+                    bbox=reg_target
+
                 )
                 keypoint_cls_target_k1 = F.one_hot(
                     gt_keypoint_cls_per_image_k1[matched_gt_inds].to(torch.int64), 2) * pred_ious_this_matching.unsqueeze(-1)
@@ -768,34 +813,38 @@ class YOLOXHead(nn.Module):
             )
         ).sum() / num_fg
 
+        loss_peypoint_reg_k1 = (
+            self.l1_loss(keypoint_reg_preds_k1.view(-1, 2)[fg_masks][keypoint_vis_flat1],
+                         keypoint_reg_k1_targets[keypoint_vis_flat1])).sum() / keypoint_vis_flat1.sum()
+        loss_peypoint_reg_k2 = (
+            self.l1_loss(keypoint_reg_preds_k2.view(-1, 2)[fg_masks][keypoint_vis_flat2],
+                         keypoint_reg_k2_targets[keypoint_vis_flat2])).sum() / keypoint_vis_flat2.sum()
+        loss_peypoint_reg_k3 = (
+            self.l1_loss(keypoint_reg_preds_k3.view(-1, 2)[fg_masks][keypoint_vis_flat3],
+                         keypoint_reg_k3_targets[keypoint_vis_flat3])).sum() / keypoint_vis_flat3.sum()
+        loss_peypoint_reg_k4 = (
+            self.l1_loss(keypoint_reg_preds_k4.view(-1, 2)[fg_masks][keypoint_vis_flat4],
+                         keypoint_reg_k4_targets[keypoint_vis_flat4])).sum() / keypoint_vis_flat4.sum()
+
         if self.use_l1:
             loss_l1 = (
                 self.l1_loss(origin_preds.view(-1, 4)[fg_masks], l1_targets)
             ).sum() / num_fg
+            key_reg_weight = 5.0
 
-            loss_peypoint_reg_k1 = (
-                self.l1_loss(keypoint_reg_preds_k1.view(-1, 2)[fg_masks][keypoint_vis_flat1],
-                             keypoint_reg_k1_targets[keypoint_vis_flat1])).sum() / keypoint_vis_flat1.sum()
-            loss_peypoint_reg_k2 = (
-                self.l1_loss(keypoint_reg_preds_k2.view(-1, 2)[fg_masks][keypoint_vis_flat2],
-                             keypoint_reg_k2_targets[keypoint_vis_flat2])).sum() / keypoint_vis_flat2.sum()
-            loss_peypoint_reg_k3 = (
-                self.l1_loss(keypoint_reg_preds_k3.view(-1, 2)[fg_masks][keypoint_vis_flat3],
-                             keypoint_reg_k3_targets[keypoint_vis_flat3])).sum() / keypoint_vis_flat3.sum()
-            loss_peypoint_reg_k4 = (
-                self.l1_loss(keypoint_reg_preds_k4.view(-1, 2)[fg_masks][keypoint_vis_flat4],
-                             keypoint_reg_k4_targets[keypoint_vis_flat4])).sum() / keypoint_vis_flat4.sum()
         else:
             loss_l1 = 0.0
-            loss_peypoint_reg_k1 = 0.0
-            loss_peypoint_reg_k2 = 0.0
-            loss_peypoint_reg_k3 = 0.0
-            loss_peypoint_reg_k4 = 0.0
+            key_reg_weight = 1.0
+
+            # loss_peypoint_reg_k1 = 0.0
+            # loss_peypoint_reg_k2 = 0.0
+            # loss_peypoint_reg_k3 = 0.0
+            # loss_peypoint_reg_k4 = 0.0
 
         reg_weight = 5.0
-        key_cls_weight = 4.5
-        key_reg_weight = 6.0
-        loss = reg_weight * loss_iou + loss_obj + loss_cls + loss_l1 \
+        key_cls_weight = 3.0
+        obj_weight = 2.0
+        loss = reg_weight * loss_iou + obj_weight * loss_obj + loss_cls + loss_l1 \
             + key_cls_weight * (loss_keypoint_cls_k1 + loss_keypoint_cls_k2 +
                                 loss_keypoint_cls_k3 + loss_keypoint_cls_k4)  \
             + key_reg_weight*(loss_peypoint_reg_k1 + loss_peypoint_reg_k2 +
@@ -804,7 +853,7 @@ class YOLOXHead(nn.Module):
         return (
             loss,
             reg_weight * loss_iou,
-            loss_obj,
+            obj_weight * loss_obj,
             loss_cls,
             loss_l1,
             key_cls_weight * loss_keypoint_cls_k1,
@@ -825,10 +874,21 @@ class YOLOXHead(nn.Module):
         l1_target[:, 3] = torch.log(gt[:, 3] / stride + eps)
         return l1_target
 
-    def get_keypoint_reg_target(self, keypoint_reg_target, gt, stride, x_shifts, y_shifts):
-        keypoint_reg_target[:, 0] = gt[:, 0] / stride - x_shifts
-        keypoint_reg_target[:, 1] = gt[:, 1] / stride - y_shifts
+    def get_keypoint_reg_target(self, keypoint_reg_target, gt, stride, x_shifts, y_shifts, bbox, eps=1e-8):
+        # keypoint_reg_target[:, 0] = (gt[:, 0] / stride - x_shifts) / (bbox[:, 2]/stride)
+        # keypoint_reg_target[:, 1] = (gt[:, 1] / stride - y_shifts) / (bbox[:, 3]/stride)
+
+        # keypoint_reg_target[:, 0] = ((gt[:, 0] - bbox[:, 0]) / stride) / (bbox[:, 2]/stride)
+        # keypoint_reg_target[:, 1] = ((gt[:, 1] - bbox[:, 1]) / stride) / (bbox[:, 3]/stride)
+        keypoint_reg_target[:, 0] = torch.sign(
+            gt[:, 0] - bbox[:, 0] + eps)*torch.log(torch.abs((gt[:, 0] - bbox[:, 0]))/stride + 1)
+        keypoint_reg_target[:, 1] = torch.sign(
+            gt[:, 1] - bbox[:, 1] + eps)*torch.log(torch.abs((gt[:, 1] - bbox[:, 1]))/stride + 1)
+        # keypoint_reg_target[:, 0] = (((gt[:, 0] - bbox[:, 0]) / (bbox[:, 2]/2))) / stride
+        # keypoint_reg_target[:, 1] = (((gt[:, 1] - bbox[:, 1]) / (bbox[:, 3]/2))) / stride
         # print(keypoint_reg_target)
+        # logger.info(keypoint_reg_target[:, 1])
+        # logger.info(torch.log(torch.abs((gt[:, 1] - bbox[:, 1]))/stride + 1))
         return keypoint_reg_target
 
     @torch.no_grad()

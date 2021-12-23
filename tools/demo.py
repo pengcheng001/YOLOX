@@ -10,9 +10,10 @@ from loguru import logger
 import cv2
 
 import torch
+import numpy as np
 
 from yolox.data.data_augment import ValTransform
-from yolox.data.datasets import  HOLO_CLASSES
+from yolox.data.datasets import HOLO_CLASSES
 from yolox.exp import get_exp
 from yolox.utils import fuse_model, get_model_info, postprocess, vis
 
@@ -163,6 +164,13 @@ class Predictor(object):
                 self.nmsthre, class_agnostic=True
             )
             logger.info("Infer time: {:.4f}s".format(time.time() - t0))
+
+        # img = img[0].cpu().numpy().copy()
+        # img = img.transpose((1, 2, 0))
+        # img = np.ascontiguousarray(img, dtype=np.uint8)
+        # img_info["raw_img"] = img
+        # img_info["ratio"] = 1
+
         return outputs, img_info
 
     def visual(self, output, img_info, cls_conf=0.35):
@@ -174,13 +182,18 @@ class Predictor(object):
 
         bboxes = output[:, 0:4]
 
+        keypoint_reg = output[:, 7:15]
+        keypoint_cls = output[:, 15:19]
         # preprocessing: resize
         bboxes /= ratio
+        keypoint_reg /= ratio
+        # print(ratio)
 
         cls = output[:, 6]
         scores = output[:, 4] * output[:, 5]
 
-        vis_res = vis(img, bboxes, scores, cls, cls_conf, self.cls_names)
+        vis_res = vis(img, bboxes, scores, cls, cls_conf,
+                      self.cls_names, keypoint_reg, keypoint_cls)
         return vis_res
 
 
