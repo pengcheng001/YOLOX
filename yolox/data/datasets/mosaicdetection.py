@@ -116,7 +116,7 @@ class MosaicDetection(Dataset):
                     labels[:, 1] = scale * _labels[:, 1] + padh
                     labels[:, 2] = scale * _labels[:, 2] + padw
                     labels[:, 3] = scale * _labels[:, 3] + padh
-                    
+
                     labels[:, 5::3] = scale * labels[:, 5::3] + padw
                     labels[:, 6::3] = scale * labels[:, 6::3] + padh
                 mosaic_labels.append(labels)
@@ -162,6 +162,20 @@ class MosaicDetection(Dataset):
         else:
             self._dataset._input_dim = self.input_dim
             img, label, img_info, img_id = self._dataset.pull_item(idx)
+            input_dim = self._dataset.input_dim
+            input_h, input_w = input_dim[0], input_dim[1]
+
+            if random.random() > 0.5:
+                img, label = random_affine(
+                    img,
+                    label,
+                    target_size=(input_w, input_h),
+                    degrees=20.,
+                    translate=0.1,
+                    scales=(1.2, 1.2),
+                    shear=2.0
+                )
+            img_info = (img.shape[1], img.shape[0])
             img, label = self.preproc(img, label, self.input_dim)
             return img, label, img_info, img_id
 
@@ -234,7 +248,7 @@ class MosaicDetection(Dataset):
             mirro_kp[:, 6:9] = cp_keypoint_origin_np[:, 9:12]
             mirro_kp[:, 9:12] = cp_keypoint_origin_np[:, 6:9]
             cp_keypoint_origin_np = mirro_kp
-            
+
         cp_bboxes_transformed_np = cp_bboxes_origin_np.copy()
         cp_bboxes_transformed_np[:, 0::2] = np.clip(
             cp_bboxes_transformed_np[:, 0::2] - x_offset, 0, target_w
@@ -242,12 +256,13 @@ class MosaicDetection(Dataset):
         cp_bboxes_transformed_np[:, 1::2] = np.clip(
             cp_bboxes_transformed_np[:, 1::2] - y_offset, 0, target_h
         )
-        
+
         cp_keypoint_transformed_np = cp_keypoint_origin_np.copy()
         cp_keypoint_transformed_np[:, ::3] = cp_keypoint_transformed_np[:, ::3] - x_offset
         cp_keypoint_transformed_np[:, 1::3] = cp_keypoint_transformed_np[:, 1::3] - y_offset
-        filtered_flag = (cp_keypoint_transformed_np[:, ::3] < 0 ) + (cp_keypoint_transformed_np[:, ::3] > target_w) + \
-                        (cp_keypoint_transformed_np[:, 1::3] < 0) + (cp_keypoint_transformed_np[:, 1::3] > target_h)
+        filtered_flag = (cp_keypoint_transformed_np[:, ::3] < 0) + (cp_keypoint_transformed_np[:, ::3] > target_w) + \
+                        (cp_keypoint_transformed_np[:, 1::3] < 0) + \
+            (cp_keypoint_transformed_np[:, 1::3] > target_h)
         cp_keypoint_transformed_np[:, 2::3][filtered_flag] = 0
 
         cls_labels = cp_labels[:, 4:5].copy()
