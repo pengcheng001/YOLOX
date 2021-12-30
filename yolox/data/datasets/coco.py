@@ -143,7 +143,15 @@ class COCODataset(Dataset):
             if obj["area"] > 0 and x2 >= x1 and y2 >= y1:
                 obj["clean_bbox"] = [x1, y1, x2, y2]
                 if("keypoints" in obj.keys()):
-                    pass
+                    if len(obj['keypoints']) == 0:
+                        obj["keypoints"] = [
+                            [0, 0, 0],
+                            [0, 0, 0],
+                            [0, 0, 0],
+                            [0, 0, 0],
+                        ]
+                    else:
+                        pass
                 else:
                     obj["keypoints"] = [
                         [0, 0, 0],

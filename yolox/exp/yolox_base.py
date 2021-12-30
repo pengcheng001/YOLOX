@@ -55,7 +55,7 @@ class Exp(BaseExp):
         self.warmup_lr = 0
         self.basic_lr_per_img = 0.01 / 64.0
         self.scheduler = "yoloxwarmcos"
-        self.no_aug_epochs = 100
+        self.no_aug_epochs = 75
         self.min_lr_ratio = 0.05
         self.ema = True
 
