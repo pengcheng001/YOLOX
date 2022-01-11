@@ -82,6 +82,7 @@ def main():
 
     logger.info("loading checkpoint done.")
     dummy_input = torch.randn(args.batch_size, 3, exp.test_size[0], exp.test_size[1])
+    logger.info("the model input shape is :{} ".format(dummy_input.shape))
 
     torch.onnx._export(
         model,

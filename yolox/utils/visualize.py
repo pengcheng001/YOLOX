@@ -3,12 +3,13 @@
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 
 import cv2
+from loguru import logger
 import numpy as np
 
 __all__ = ["vis"]
 
 
-def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None, keypoint_reg=None, keypoint_cls=None):
+def vis(img, boxes, scores, cls_ids,  conf=0.5, class_names=None, keypoint_reg=None, keypoint_cls=None, down_size_ratio=None, down_size_threh=None):
 
     for i in range(len(boxes)):
         box = boxes[i]
@@ -20,6 +21,10 @@ def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None, keypoint_reg=No
         y0 = int(box[1])
         x1 = int(box[2])
         y1 = int(box[3])
+        if down_size_ratio is not None and down_size_threh is not None:
+            h = y1 - y0
+            if h / down_size_ratio < down_size_threh:
+                continue
         keypoint_pts = []
         keypoint_pts_v = []
 
@@ -62,20 +67,16 @@ def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None, keypoint_reg=No
             keypoint_pts_v.append(k2_v)
             keypoint_pts_v.append(k3_v)
             keypoint_pts_v.append(k4_v)
+            logger.info('------------------')
             for i in range(4):
+                logger.info("keypoints {}".format(keypoint_pts[i]))
                 if keypoint_pts_v[i] == 1:
-                    # print(keypoint_pts[i])
-                    # print(keypoint_pts[i])
+                    # if True:
+                    logger.info("keypoints {}".format(keypoint_pts[i]))
                     cv2.circle(img, keypoint_pts[i], 2, (0, 15, 255), 3)
                     cv2.putText(
                         img, str(i), (keypoint_pts[i][0] + 5, keypoint_pts[i][1] + 5), font, 0.5,  (0, 15, 255), 2)
-                # else:
-                #     cv2.circle(img, keypoint_pts[i], 2, (0, 255, 15), 3)
-                #     cv2.putText(
-                #         img, str(i), (keypoint_pts[i][0] + 5, keypoint_pts[i][1] + 5), font, 0.5,  (0, 255, 15), 2)
-
-                # cv2.imshow("show_keypoint", img)
-                # cv2.waitKey(0)
+            logger.info('------------------')
 
     return img
 

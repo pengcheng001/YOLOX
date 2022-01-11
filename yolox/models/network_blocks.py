@@ -194,17 +194,20 @@ class Focus(nn.Module):
 
     def forward(self, x):
         # shape of x (b,c,w,h) -> y(b,4c,w/2,h/2)
-        patch_top_left = x[..., ::2, ::2]
-        patch_top_right = x[..., ::2, 1::2]
-        patch_bot_left = x[..., 1::2, ::2]
-        patch_bot_right = x[..., 1::2, 1::2]
-        x = torch.cat(
-            (
-                patch_top_left,
-                patch_bot_left,
-                patch_top_right,
-                patch_bot_right,
-            ),
-            dim=1,
-        )
+        # patch_top_left = x[..., ::2, ::2]
+        # patch_top_right = x[..., ::2, 1::2]
+        # patch_bot_left = x[..., 1::2, ::2]
+        # patch_bot_right = x[..., 1::2, 1::2]
+        # x = torch.cat(
+        #     (
+        #         patch_top_left,
+        #         patch_bot_left,
+        #         patch_top_right,
+        #         patch_bot_right,
+        #     ),
+        #     dim=1,
+        # )
+        a, b = x[..., ::2, :].transpose(-2, -1), x[..., 1::2, :].transpose(-2, -1)
+        x = torch.cat([a[..., ::2, :], b[..., ::2, :], a[..., 1::2, :],
+                      b[..., 1::2, :]], 1).transpose(-2, -1)
         return self.conv(x)

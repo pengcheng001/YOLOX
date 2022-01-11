@@ -388,10 +388,10 @@ class YOLOXHead(nn.Module):
                      keypoint_reg_k2_output,
                      keypoint_reg_k3_output,
                      keypoint_reg_k4_output,
-                     keypoint_cls_k1_output.sigmoid(),
-                     keypoint_cls_k2_output.sigmoid(),
-                     keypoint_cls_k3_output.sigmoid(),
-                     keypoint_cls_k4_output.sigmoid(), ], 1)
+                     keypoint_cls_k1_output,
+                     keypoint_cls_k2_output,
+                     keypoint_cls_k3_output,
+                     keypoint_cls_k4_output, ], 1)
 
             outputs.append(output)
 
@@ -412,9 +412,13 @@ class YOLOXHead(nn.Module):
             outputs = torch.cat(
                 [x.flatten(start_dim=2) for x in outputs], dim=2
             ).permute(0, 2, 1)
+
             if self.decode_in_inference:
+                logger.info("yolox head using self.decode_in_inference")
                 return self.decode_outputs(outputs, dtype=xin[0].type())
             else:
+                # logger.info(
+                #     "yolox head not using self.decode_in_inference, output shape: {}".format(outputs.shape))
                 return outputs
 
     def get_output_and_grid(self, output, k, stride, dtype):
@@ -456,30 +460,8 @@ class YOLOXHead(nn.Module):
         strides = torch.cat(strides, dim=1).type(dtype)
         outputs[..., :2] = (outputs[..., :2] + grids) * strides
         outputs[..., 2:4] = torch.exp(outputs[..., 2:4]) * strides
-        # outputs[..., bbox_ch:bbox_ch +
-        #         8] = (outputs[..., bbox_ch:bbox_ch+8] + grids.repeat(1, 1, 4)) * strides
         outputs[..., bbox_ch:bbox_ch + 8] = torch.sign(outputs[..., bbox_ch:bbox_ch+8]) * ((torch.exp(
             torch.abs(outputs[..., bbox_ch:bbox_ch+8])) - 1)) * strides + outputs[..., 0:2].repeat(1, 1, 4)
-
-        # logger.info(
-        #     "outputs[..., bbox_ch:bbox_ch + 8:2] shape: {}".format(outputs[..., bbox_ch:bbox_ch + 8:2].shape))
-        # logger.info('outputs[..., 0] shape: {}'.format(outputs[..., 0].shape))
-        # logger.info('grids shape: {}'.format(grids.shape))
-        # logger.info('grids.repeat(1, 1, 4) shape: {}'.format(grids.repeat(1, 1, 4).shape))
-        # logger.info('outputs[..., 0].repeat(1, 1, 4) shape: {}'.format(
-        #     outputs[..., 0].repeat(1, 1, 4).shape))
-        # logger.info('outputs[..., 2] / 2 shape: {}'.format((outputs[..., 2] / 2).shape))
-
-        # outputs[..., bbox_ch:bbox_ch + 8] = outputs[..., bbox_ch:bbox_ch + 8] * \
-        #     ((outputs[..., 2:4] / 2).repeat(1, 1, 4)) + \
-        #     (outputs[..., 0:2].repeat(1, 1, 4))
-
-        # outputs[..., bbox_ch:bbox_ch + 8] = outputs[..., bbox_ch:bbox_ch + 8] * \
-        #     ((outputs[..., 2:4] / 2).repeat(1, 1, 4)) + \
-        #     (outputs[..., 0:2].repeat(1, 1, 4))
-
-        # outputs[..., bbox_ch + 1:bbox_ch +
-        #         8:2] = outputs[..., bbox_ch + 1:bbox_ch + 8:2] * (outputs[..., 3] / 2) + outputs[..., 1]
         return outputs
 
     def get_losses(

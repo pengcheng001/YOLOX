@@ -3,6 +3,7 @@
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 
 import os
+from loguru import logger
 
 import numpy as np
 
@@ -44,13 +45,13 @@ def nms(boxes, scores, nms_thr):
     return keep
 
 
-def multiclass_nms(boxes, scores, nms_thr, score_thr, class_agnostic=True):
+def multiclass_nms(boxes, keypoints_reg, keypoints_cls, scores, nms_thr, score_thr, class_agnostic=True):
     """Multiclass NMS implemented in Numpy"""
     if class_agnostic:
         nms_method = multiclass_nms_class_agnostic
     else:
         nms_method = multiclass_nms_class_aware
-    return nms_method(boxes, scores, nms_thr, score_thr)
+    return nms_method(boxes, keypoints_reg, keypoints_cls, scores, nms_thr, score_thr)
 
 
 def multiclass_nms_class_aware(boxes, scores, nms_thr, score_thr):
@@ -77,21 +78,31 @@ def multiclass_nms_class_aware(boxes, scores, nms_thr, score_thr):
     return np.concatenate(final_dets, 0)
 
 
-def multiclass_nms_class_agnostic(boxes, scores, nms_thr, score_thr):
+def multiclass_nms_class_agnostic(boxes, keypoints_reg, keypoints_cls, scores, nms_thr, score_thr):
     """Multiclass NMS implemented in Numpy. Class-agnostic version."""
     cls_inds = scores.argmax(1)
     cls_scores = scores[np.arange(len(cls_inds)), cls_inds]
-
+    key_cls1 = keypoints_cls[:, 0:2].argmax(1)
+    key_cls2 = keypoints_cls[:, 2:4].argmax(1)
+    key_cls3 = keypoints_cls[:, 4:6].argmax(1)
+    key_cls4 = keypoints_cls[:, 6:8].argmax(1)
     valid_score_mask = cls_scores > score_thr
     if valid_score_mask.sum() == 0:
         return None
     valid_scores = cls_scores[valid_score_mask]
     valid_boxes = boxes[valid_score_mask]
+    valid_keypoints_reg = keypoints_reg[valid_score_mask]
+    valid_keypoints_cls = keypoints_cls[valid_score_mask]
     valid_cls_inds = cls_inds[valid_score_mask]
+    key_cls1 = key_cls1[valid_score_mask]
+    key_cls2 = key_cls2[valid_score_mask]
+    key_cls3 = key_cls3[valid_score_mask]
+    key_cls4 = key_cls4[valid_score_mask]
     keep = nms(valid_boxes, valid_scores, nms_thr)
     if keep:
         dets = np.concatenate(
-            [valid_boxes[keep], valid_scores[keep, None], valid_cls_inds[keep, None]], 1
+            [valid_boxes[keep], valid_scores[keep, None], valid_cls_inds[keep, None],
+                valid_keypoints_reg[keep], key_cls1[keep, None], key_cls2[keep, None], key_cls3[keep, None], key_cls4[keep, None]], 1
         )
     return dets
 
@@ -115,10 +126,24 @@ def demo_postprocess(outputs, img_size, p6=False):
         grids.append(grid)
         shape = grid.shape[:2]
         expanded_strides.append(np.full((*shape, 1), stride))
-
+    bbox_ch = 18
     grids = np.concatenate(grids, 1)
     expanded_strides = np.concatenate(expanded_strides, 1)
     outputs[..., :2] = (outputs[..., :2] + grids) * expanded_strides
     outputs[..., 2:4] = np.exp(outputs[..., 2:4]) * expanded_strides
+    for o in outputs[..., bbox_ch:bbox_ch+2][0]:
+        print(o)
+    outputs[..., bbox_ch:bbox_ch+2] = np.sign(outputs[..., bbox_ch:bbox_ch+2]) * ((np.exp(
+        np.abs(outputs[..., bbox_ch:bbox_ch+2])) - 1)) * expanded_strides + outputs[..., :2]
+    # print(outputs[..., bbox_ch:bbox_ch+2])
+
+    outputs[..., bbox_ch + 2:bbox_ch + 4] = np.sign(outputs[..., bbox_ch + 2:bbox_ch + 4]) * ((np.exp(
+        np.abs(outputs[..., bbox_ch + 2:bbox_ch+4])) - 1)) * expanded_strides + outputs[..., :2]
+
+    outputs[..., bbox_ch + 4:bbox_ch + 6] = np.sign(outputs[..., bbox_ch + 4:bbox_ch+6]) * ((np.exp(
+        np.abs(outputs[..., bbox_ch + 4:bbox_ch+6])) - 1)) * expanded_strides + outputs[..., :2]
+
+    outputs[..., bbox_ch + 6:bbox_ch + 8] = np.sign(outputs[..., bbox_ch + 6:bbox_ch+8]) * ((np.exp(
+        np.abs(outputs[..., bbox_ch + 6:bbox_ch+8])) - 1)) * expanded_strides + outputs[..., :2]
 
     return outputs
