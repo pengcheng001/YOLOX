@@ -67,16 +67,14 @@ def vis(img, boxes, scores, cls_ids,  conf=0.5, class_names=None, keypoint_reg=N
             keypoint_pts_v.append(k2_v)
             keypoint_pts_v.append(k3_v)
             keypoint_pts_v.append(k4_v)
-            logger.info('------------------')
+
             for i in range(4):
-                logger.info("keypoints {}".format(keypoint_pts[i]))
                 if keypoint_pts_v[i] == 1:
                     # if True:
-                    logger.info("keypoints {}".format(keypoint_pts[i]))
+
                     cv2.circle(img, keypoint_pts[i], 2, (0, 15, 255), 3)
                     cv2.putText(
                         img, str(i), (keypoint_pts[i][0] + 5, keypoint_pts[i][1] + 5), font, 0.5,  (0, 15, 255), 2)
-            logger.info('------------------')
 
     return img
 
