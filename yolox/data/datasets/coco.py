@@ -3,6 +3,7 @@
 # Copyright (c) Megvii, Inc. and its affiliates.
 
 import os
+from time import sleep
 from loguru import logger
 
 import cv2
@@ -126,6 +127,7 @@ class COCODataset(Dataset):
         anno_ids = self.coco.getAnnIds(imgIds=[int(id_)], iscrowd=False)
         annotations = self.coco.loadAnns(anno_ids)
         objs = []
+        ann_kp_ad_dets = []
         for obj in annotations:
             x1 = np.max((0, obj["bbox"][0]))
             y1 = np.max((0, obj["bbox"][1]))
@@ -151,7 +153,18 @@ class COCODataset(Dataset):
                             [0, 0, 0],
                         ]
                     else:
-                        pass
+                        for kp_ind in range(4):
+                            if obj['keypoints'][kp_ind][2] == 1:
+                                kp_bbox_rad_h = bbox_h / 4
+                                kp_bbox_rad_w = bbox_w / 4
+                                kp_bbox = [
+                                    obj['keypoints'][kp_ind][0] - kp_bbox_rad_w,
+                                    obj['keypoints'][kp_ind][1] - kp_bbox_rad_h,
+                                    obj['keypoints'][kp_ind][0] + kp_bbox_rad_w,
+                                    obj['keypoints'][kp_ind][1] + kp_bbox_rad_h,
+                                    kp_ind + len(self.class_ids) - 4,
+                                ]
+                                ann_kp_ad_dets.append(kp_bbox)
                 else:
                     obj["keypoints"] = [
                         [0, 0, 0],
@@ -161,20 +174,25 @@ class COCODataset(Dataset):
                     ]
                 objs.append(obj)
 
-        num_objs = len(objs)
+        num_objs = len(objs) + len(ann_kp_ad_dets)
 
         res = np.zeros((num_objs, 17))
 
         r = min(self.img_size[0] / height, self.img_size[1] / width)
         for ix, obj in enumerate(objs):
             cls = self.class_ids.index(obj["category_id"])
-            res[ix, 0:4] = obj["clean_bbox"]
+            res[ix, 0: 4] = obj["clean_bbox"]
             res[ix, 4] = cls
             for ik in range(4):
                 res[ix, ik*3+5: ik*3+8] = obj["keypoints"][ik]
                 res[ix, ik*3+5: ik*3+7] *= r
-        res[:, :4] *= r
 
+        for kp_det_ind in range(len(objs), num_objs):
+            kp_det = ann_kp_ad_dets[kp_det_ind - len(objs)]
+            res[kp_det_ind, 4] = kp_det
+            for ik in range(4):
+                res[ix, ik*3+5: ik*3+8] = [0, 0, 0]
+        res[:, : 4] *= r
         img_info = (height, width)
         resized_info = (int(height * r), int(width * r))
 

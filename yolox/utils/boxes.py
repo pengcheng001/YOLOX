@@ -29,14 +29,16 @@ def filter_box(output, scale_range):
     return output[keep]
 
 
-def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False):
+def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False,  kp_det_cls=[13, 14, 15, 16]):
     box_corner = prediction.new(prediction.shape)
+    bbox_corner_kp_cache = box_corner.copy()
     box_corner[:, :, 0] = prediction[:, :, 0] - prediction[:, :, 2] / 2
     box_corner[:, :, 1] = prediction[:, :, 1] - prediction[:, :, 3] / 2
     box_corner[:, :, 2] = prediction[:, :, 0] + prediction[:, :, 2] / 2
     box_corner[:, :, 3] = prediction[:, :, 1] + prediction[:, :, 3] / 2
     prediction[:, :, :4] = box_corner[:, :, :4]
     output = [None for _ in range(len(prediction))]
+    kp_det = [None for _ in range(len(prediction))]
     for i, image_pred in enumerate(prediction):
 
         # If none are remaining => process next image
@@ -60,7 +62,11 @@ def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agn
         # Detections ordered as (x1, y1, x2, y2, obj_conf, class_conf, class_pred)
         detections = torch.cat((image_pred[:, :5], class_conf, class_pred.float(
         ), image_pred[:, 5 + num_classes:5 + num_classes + 8], keypoint_class_pre_k1, keypoint_class_pre_k2, keypoint_class_pre_k3, keypoint_class_pre_k4), 1)
+        # Detections ordered as (cx, cy, class_conf, class_pred)
+        bbox_corner_kp_caches = torch.cat(
+            (bbox_corner_kp_cache[i, :, :2], class_conf, class_pred.float(),), 1)
         detections = detections[conf_mask]
+        bbox_corner_kp_caches = bbox_corner_kp_caches[conf_mask]
         if not detections.size(0):
             continue
 
@@ -79,12 +85,25 @@ def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agn
             )
 
         detections = detections[nms_out_index]
+        bbox_corner_kp_caches = bbox_corner_kp_caches[nms_out_index]
+        kp_det_flag = None
+        kp_id = 0
+        for kp_cls in kp_det_cls:
+            select_cls_flag = (bbox_corner_kp_caches[:, 3] == kp_cls)
+            kp_det_flag = (kp_det_flag or select_cls_flag)
+            bbox_corner_kp_caches[select_cls_flag][:, 3] = kp_id
+            kp_id += 1
+        det_flag = [True ^ f for f in kp_det_flag]
+        bbox_corner_kp_caches = bbox_corner_kp_caches[kp_det_flag]
+        detections = detections[det_flag]
         if output[i] is None:
             output[i] = detections
+            kp_det = bbox_corner_kp_caches
         else:
             output[i] = torch.cat((output[i], detections))
+            kp_det[i] = torch.cat((kp_det[i], bbox_corner_kp_caches))
 
-    return output
+    return output, kp_det
 
 
 def bboxes_iou(bboxes_a, bboxes_b, xyxy=True):

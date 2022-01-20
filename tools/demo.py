@@ -159,7 +159,7 @@ class Predictor(object):
             outputs = self.model(img)
             if self.decoder is not None:
                 outputs = self.decoder(outputs, dtype=outputs.type())
-            outputs = postprocess(
+            outputs, kp_det = postprocess(
                 outputs, self.num_classes, self.confthre,
                 self.nmsthre, class_agnostic=True
             )
