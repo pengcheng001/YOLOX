@@ -8,7 +8,6 @@ import numpy as np
 
 __all__ = ["vis"]
 
-
 def vis(img, boxes, scores, cls_ids,  conf=0.5, class_names=None, keypoint_reg=None, keypoint_cls=None, down_size_ratio=None, down_size_threh=None):
 
     for i in range(len(boxes)):
@@ -72,7 +71,7 @@ def vis(img, boxes, scores, cls_ids,  conf=0.5, class_names=None, keypoint_reg=N
                 if keypoint_pts_v[i] == 1:
                     # if True:
 
-                    cv2.circle(img, keypoint_pts[i], 2, (0, 15, 255), 3)
+                    cv2.circle(img, keypoint_pts[i], 2, (0, 15, 255), -1)
                     cv2.putText(
                         img, str(i), (keypoint_pts[i][0] + 5, keypoint_pts[i][1] + 5), font, 0.5,  (0, 15, 255), 2)
 

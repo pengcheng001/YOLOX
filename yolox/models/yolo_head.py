@@ -55,8 +55,6 @@ class YOLOXHead(nn.Module):
         self.keypoint_reg_k4 = nn.ModuleList()
         self.stems = nn.ModuleList()
         Conv = DWConv if depthwise else BaseConv
-        self.tanh = nn.Tanh()
-
         for i in range(len(in_channels)):
             self.stems.append(
                 BaseConv(
@@ -591,6 +589,7 @@ class YOLOXHead(nn.Module):
                            CPU mode is applied in this batch. If you want to avoid this issue, \
                            try to reduce the batch size or image size."
                     )
+                    assert True == False
                     torch.cuda.empty_cache()
                     (
                         gt_matched_classes,

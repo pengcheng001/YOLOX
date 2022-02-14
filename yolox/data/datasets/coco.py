@@ -42,6 +42,7 @@ class COCODataset(Dataset):
         super().__init__(img_size)
         if data_dir is None:
             data_dir = os.path.join(get_yolox_datadir(), "COCO")
+            # data_dir = os.path.join(get_yolox_datadir())
         self.data_dir = data_dir
         self.json_file = json_file
 
@@ -86,6 +87,7 @@ class COCODataset(Dataset):
             logger.info(
                 "Caching images for the first time. This might take about 20 minutes for COCO"
             )
+            logger.info("Cache images to numpy, Shape: {}".format((len(self.ids), max_h, max_w)))
             self.imgs = np.memmap(
                 cache_file,
                 shape=(len(self.ids), max_h, max_w, 3),
@@ -143,6 +145,8 @@ class COCODataset(Dataset):
                 if max(h_size, w_size) <= self.min_input_h:
                     continue
             if obj["area"] > 0 and x2 >= x1 and y2 >= y1:
+                bbox_h = y2 - y1 + 1
+                bbox_w = x2 - x1 + 1
                 obj["clean_bbox"] = [x1, y1, x2, y2]
                 if("keypoints" in obj.keys()):
                     if len(obj['keypoints']) == 0:
@@ -153,7 +157,9 @@ class COCODataset(Dataset):
                             [0, 0, 0],
                         ]
                     else:
+                        assert len(obj['keypoints']) == 4
                         for kp_ind in range(4):
+                            assert len(obj['keypoints'][kp_ind]) == 3
                             if obj['keypoints'][kp_ind][2] == 1:
                                 kp_bbox_rad_h = bbox_h / 4
                                 kp_bbox_rad_w = bbox_w / 4
@@ -162,7 +168,7 @@ class COCODataset(Dataset):
                                     obj['keypoints'][kp_ind][1] - kp_bbox_rad_h,
                                     obj['keypoints'][kp_ind][0] + kp_bbox_rad_w,
                                     obj['keypoints'][kp_ind][1] + kp_bbox_rad_h,
-                                    kp_ind + len(self.class_ids) - 4,
+                                    kp_ind + len(self.class_ids) -1,
                                 ]
                                 ann_kp_ad_dets.append(kp_bbox)
                 else:
@@ -189,9 +195,9 @@ class COCODataset(Dataset):
 
         for kp_det_ind in range(len(objs), num_objs):
             kp_det = ann_kp_ad_dets[kp_det_ind - len(objs)]
-            res[kp_det_ind, 4] = kp_det
-            for ik in range(4):
-                res[ix, ik*3+5: ik*3+8] = [0, 0, 0]
+            res[kp_det_ind, :5] = kp_det
+            # for ik in range(4):
+            #     res[ix, ik*3+5: ik*3+8] = [0, 0, 0]
         res[:, : 4] *= r
         img_info = (height, width)
         resized_info = (int(height * r), int(width * r))

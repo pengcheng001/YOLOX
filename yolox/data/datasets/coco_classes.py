@@ -16,6 +16,10 @@ HOLO_CLASSES=(
     'Bus', 
     'Emergency_vehicle', 
     'Warning_Triangle',
+    'kp1',
+    'kp2',
+    'kp3',
+    'kp4',
 )
 
 COCO_CLASSES = (

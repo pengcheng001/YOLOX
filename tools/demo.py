@@ -15,7 +15,8 @@ import numpy as np
 from yolox.data.data_augment import ValTransform
 from yolox.data.datasets import HOLO_CLASSES
 from yolox.exp import get_exp
-from yolox.utils import fuse_model, get_model_info, postprocess, vis
+from yolox.utils import fuse_model, get_model_info, vis, match_keypoints
+from yolox.utils import postprocess_kp_det as postprocess
 
 IMAGE_EXT = [".jpg", ".jpeg", ".webp", ".bmp", ".png"]
 
@@ -53,8 +54,8 @@ def make_parser():
         type=str,
         help="device to run our model, can either be cpu or gpu",
     )
-    parser.add_argument("--conf", default=0.3, type=float, help="test conf")
-    parser.add_argument("--nms", default=0.3, type=float, help="test nms threshold")
+    parser.add_argument("--conf", default=0.25, type=float, help="test conf")
+    parser.add_argument("--nms", default=0.45, type=float, help="test nms threshold")
     parser.add_argument("--tsize", default=None, type=int, help="test img size")
     parser.add_argument(
         "--fp16",
@@ -159,7 +160,7 @@ class Predictor(object):
             outputs = self.model(img)
             if self.decoder is not None:
                 outputs = self.decoder(outputs, dtype=outputs.type())
-            outputs, kp_det = postprocess(
+            outputs ,kp_det = postprocess(
                 outputs, self.num_classes, self.confthre,
                 self.nmsthre, class_agnostic=True
             )
@@ -171,7 +172,7 @@ class Predictor(object):
         # img_info["raw_img"] = img
         # img_info["ratio"] = 1
 
-        return outputs, img_info
+        return outputs, kp_det, img_info
 
     def visual(self, output, img_info, cls_conf=0.35):
         ratio = img_info["ratio"]
@@ -195,7 +196,42 @@ class Predictor(object):
         vis_res = vis(img, bboxes, scores, cls, cls_conf,
                       self.cls_names, keypoint_reg, keypoint_cls)
         return vis_res
+    def visual_det_kp(self, output, img_info, cls_conf=0.35):
+        img = img_info["raw_img"]
+        ratio = img_info["ratio"]
+        bboxes = output[:, 0:4]
+        keypoint_reg = output[:, 6:14]
+        keypoint_cls = output[:, 14:18]
+        scores = output[:, 5]
+        cls = output[:, 4]
+        bboxes /= ratio
+        keypoint_reg /= ratio
+        vis_res = vis(img, bboxes, scores, cls, cls_conf,
+                      self.cls_names, keypoint_reg, keypoint_cls)
+        return vis_res
+        
 
+def visual_kp_det(img, kp_det, img_info, cls_conf=0.25):
+    ratio = img_info["ratio"]
+    img = img_info["raw_img"]
+    if kp_det is None:
+        return img
+    kp_det = kp_det.cpu()
+    keypoints= kp_det[:, 0:2]
+    keypoints /= ratio
+    cls = kp_det[:, 4]
+    scores = kp_det[:, 2] * kp_det[:, 3]
+    kp_cls = kp_det[:, 4].numpy()
+    for i in range(len(keypoints)):
+        if scores[i]<cls_conf:
+            continue
+        # logger.error(keypoints)
+        vis_kp = [int(keypoints[i][0]), int(keypoints[i][1])]
+        cv2.circle(img, vis_kp, 3, (0, 255, 15), 1)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(img, str(int(kp_cls[i] - 9)), (int(keypoints[i][0]) + 5, int(keypoints[i][1]) + 5), font, 0.5,  (0, 255, 15), 2)
+    return img
+        
 
 def image_demo(predictor, vis_folder, path, current_time, save_result):
     if os.path.isdir(path):
@@ -204,8 +240,13 @@ def image_demo(predictor, vis_folder, path, current_time, save_result):
         files = [path]
     files.sort()
     for image_name in files:
-        outputs, img_info = predictor.inference(image_name)
-        result_image = predictor.visual(outputs[0], img_info, predictor.confthre)
+        outputs, kp_det, img_info = predictor.inference(image_name)
+        if outputs[0] is None:
+            continue
+        
+        match_result = match_keypoints(outputs[0], kp_det[0], 0.25, img_info)
+        result_image = predictor.visual_det_kp(match_result, img_info, predictor.confthre)
+        visual_kp_det(result_image, kp_det[0], img_info, predictor.confthre)
         if save_result:
             save_folder = os.path.join(
                 vis_folder, time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
