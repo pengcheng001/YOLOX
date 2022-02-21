@@ -105,9 +105,19 @@ def euclidean_metric(matrix_a, matrix_b):
     TM3 = cs @ fs.T
     Dis = cs_2_se + fs_2_se.T - 2 * TM3
     return Dis
+
+def format_keypoints(bboxes_kp_, conf):
+    bboxes_kp = bboxes_kp_.clone().cpu()
+    bboxes = bboxes_kp[:, 0:4]
+    keypoint_reg = bboxes_kp[:, 7:15]
+    keypoint_cls = bboxes_kp[:, 15:19]
+    categroy = bboxes_kp[:,6]
+    # bboxes /= ratio
+    # keypoint_reg /= ratio
+    scores = bboxes_kp[:,4] * bboxes_kp[:,5]
+    slected_bbox_flag = (scores > conf)
     
-    
-def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750):
+def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750, is_merge=True):
     # bboxes_kp ordered as (x1, y1, x2, y2, obj_conf, class_pred, k1_reg, k2_reg, k3_reg, k4_reg, k1_vis, k2_vis, k3_vis, k4_vis)
     # det_kp ordered as (x, y, obj_conf, class_conf, class_pred)
     if bboxes_kp_ is None:
@@ -131,6 +141,8 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750):
     slected_scores = scores[slected_bbox_flag].unsqueeze(1)
     # x,y,x,y,cate,socre,kp_reg, kp_vis
     slected_bbox_kp = torch.cat((slected_bbox, slected_category, slected_scores, slected_kp_reg, slected_kp_cls),1)
+    if is_merge is False:
+        return slected_bbox_kp
     # match_fg =  np.zeros((slected_bbox_kp.shape[0], 12))
    
     det_kp_scores = det_kp[:, 2] * det_kp[:, 3]
@@ -150,21 +162,14 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750):
     fg_kp1 = (slected_det_kp[:,4] == 9)
     det_kp1_matrix = slected_det_kp[fg_kp1][:,0:2].numpy()
     dis_kp1 = euclidean_metric(det_kp1_matrix, reg_kp1_matrix)
-    logger.error(dis_kp1)
-    logger.error("det: {}".format(det_kp1_matrix))
-    logger.error("reg: {}".format(reg_kp1_matrix))
     if len(dis_kp1) >=1:
         min_index = np.argmin(dis_kp1,1)
         for i in range(len(min_index)):
             min_dis = dis_kp1[i][min_index[i]]
-            logger.info("min dis: {}".format(min_dis))
             if min_dis < min_matched_dis:
                 reg_kp1_matrix[min_index[i]]=det_kp1_matrix[i]
-                logger.info("change")     
-        slected_bbox_kp[:, 6:8][fg_vis_kp1] = torch.from_numpy(reg_kp1_matrix)
-    logger.error("adter: {}".format(slected_bbox_kp[:, 6:8][fg_vis_kp1]))
-        
-      
+  
+        slected_bbox_kp[:, 6:8][fg_vis_kp1] = torch.from_numpy(reg_kp1_matrix) 
     fg_kp2 = (slected_det_kp[:,4] == 10)
     det_kp2_matrix = slected_det_kp[fg_kp2][:,0:2].numpy()
     dis_kp2 = euclidean_metric(det_kp2_matrix, reg_kp2_matrix)
@@ -194,7 +199,6 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750):
     dis_kp4 = euclidean_metric(det_kp4_matrix, reg_kp4_matrix)
     if len(dis_kp4) >=1:
         min_index = np.argmin(dis_kp4,1)
-        logger.info(min_index)
         for i in range(len(min_index)):
             min_dis = dis_kp4[i][min_index[i]]
             if min_dis < min_matched_dis:

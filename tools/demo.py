@@ -11,6 +11,7 @@ import cv2
 
 import torch
 import numpy as np
+from tqdm import trange
 
 from yolox.data.data_augment import ValTransform
 from yolox.data.datasets import HOLO_CLASSES
@@ -23,9 +24,6 @@ IMAGE_EXT = [".jpg", ".jpeg", ".webp", ".bmp", ".png"]
 
 def make_parser():
     parser = argparse.ArgumentParser("YOLOX Demo!")
-    parser.add_argument(
-        "demo", default="image", help="demo type, eg. image, video and webcam"
-    )
     parser.add_argument("-expn", "--experiment-name", type=str, default=None)
     parser.add_argument("-n", "--name", type=str, default=None, help="model name")
 
@@ -50,7 +48,7 @@ def make_parser():
     parser.add_argument("-c", "--ckpt", default=None, type=str, help="ckpt for eval")
     parser.add_argument(
         "--device",
-        default="gpu",
+        default="cpu",
         type=str,
         help="device to run our model, can either be cpu or gpu",
     )
@@ -85,7 +83,22 @@ def make_parser():
         action="store_true",
         help="Using TensorRT model for testing.",
     )
+    parser.add_argument(
+        "--txt",
+        dest="txt",
+        default=False,
+        action="store_true",
+        help="write res into txt.",
+    )
+    parser.add_argument(
+        "--filter_15pix",
+        dest="filter_15pix",
+        default=False,
+        action="store_true",
+        help="filter 15pixel.",
+    )
     return parser
+
 
 
 def get_image_list(path):
@@ -131,7 +144,7 @@ class Predictor(object):
             self.model(x)
             self.model = model_trt
 
-    def inference(self, img):
+    def inference(self, img, infer_time_out=None):
         img_info = {"id": 0}
         if isinstance(img, str):
             img_info["file_name"] = os.path.basename(img)
@@ -164,7 +177,8 @@ class Predictor(object):
                 outputs, self.num_classes, self.confthre,
                 self.nmsthre, class_agnostic=True
             )
-            logger.info("Infer time: {:.4f}s".format(time.time() - t0))
+            if infer_time_out is not None:
+                infer_time_out["Infer_time"] = "{:.4f}s".format(time.time() - t0)
 
         # img = img[0].cpu().numpy().copy()
         # img = img.transpose((1, 2, 0))
@@ -174,17 +188,19 @@ class Predictor(object):
 
         return outputs, kp_det, img_info
 
-    def visual(self, output, img_info, cls_conf=0.35):
+    def visual(self, output, img_info, cls_conf=0.35, filter=None, max_pix=15.0):
         ratio = img_info["ratio"]
         img = img_info["raw_img"]
+        img_height = img_info['height']
+        img_width = img_info['width']
         if output is None:
-            return img
+            return img, ""
         output = output.cpu()
 
         bboxes = output[:, 0:4]
-
         keypoint_reg = output[:, 7:15]
         keypoint_cls = output[:, 15:19]
+
         # preprocessing: resize
         bboxes /= ratio
         keypoint_reg /= ratio
@@ -193,12 +209,55 @@ class Predictor(object):
         cls = output[:, 6]
         scores = output[:, 4] * output[:, 5]
 
+        lines = ''
+        if True:
+            for i in range(len(bboxes)):
+                vehicle_id = [1, 2, 9, 11, 12]
+                category_id = int(cls[i] + 1)
+                score = scores[i]
+                if score < cls_conf:
+                    continue
+                ratio_h = img_height / 384
+                ratio_w = img_width / 768
+
+                x1 = max(bboxes[i][0], 0)
+                y1 = max(bboxes[i][1], 0)
+                x2 = min(bboxes[i][2], img_width - 1)
+                y2 = min(bboxes[i][3], img_height - 1)
+                w = x2 - x1 + 1
+                h = y2 - y1 + 1
+                down_size = h / ratio_h
+                # if category_id not in vehicle_id and filter_15pixel and (h / ratio_h) < 15.0:
+                #     continue
+                # elif category_id in vehicle_id and filter_15pixel and min(w / ratio_w, h / ratio_h) < 15.0:
+                #     continue
+
+                if down_size < max_pix and filter:
+                    continue
+                x1 = bboxes[i][0]
+                y1 = bboxes[i][1]
+                x2 = bboxes[i][2]
+                y2 = bboxes[i][3]
+                lines += "{},{},{},{},{},{},".format(category_id, score, x1, y1, x2, y2)
+                for j in range(4):
+                    if keypoint_cls[i][j] == 1:
+                        lines += "{},{},{}, ".format(
+                            keypoint_reg[i][0 + j*2], keypoint_reg[i][1 + j*2], 1)
+                    else:
+                        lines += "{},{},{},".format(
+                            0, 0, 0, 0, 0)
+                lines += "\n"
         vis_res = vis(img, bboxes, scores, cls, cls_conf,
-                      self.cls_names, keypoint_reg, keypoint_cls)
-        return vis_res
-    def visual_det_kp(self, output, img_info, cls_conf=0.35):
+                      self.cls_names, keypoint_reg, keypoint_cls, ratio_h, max_pix)
+        return vis_res, lines
+    
+    def visual_det_kp(self, output, img_info, cls_conf=0.35, filter=None, max_pix=15.0):
         img = img_info["raw_img"]
         ratio = img_info["ratio"]
+        img_height = img_info['height']
+        img_width = img_info['width']
+        if output is None:
+            return img, ""
         bboxes = output[:, 0:4]
         keypoint_reg = output[:, 6:14]
         keypoint_cls = output[:, 14:18]
@@ -208,7 +267,40 @@ class Predictor(object):
         keypoint_reg /= ratio
         vis_res = vis(img, bboxes, scores, cls, cls_conf,
                       self.cls_names, keypoint_reg, keypoint_cls)
-        return vis_res
+        lines = ''
+        if True:
+            for i in range(len(bboxes)):
+                category_id = int(cls[i] + 1)
+                score = scores[i]
+                if score < cls_conf:
+                    continue
+                ratio_h = img_height / 384
+                ratio_w = img_width / 768
+                x1 = max(bboxes[i][0], 0)
+                y1 = max(bboxes[i][1], 0)
+                x2 = min(bboxes[i][2], img_width - 1)
+                y2 = min(bboxes[i][3], img_height - 1)
+                w = x2 - x1 + 1
+                h = y2 - y1 + 1
+                down_size = h / ratio_h
+                if down_size < max_pix and filter:
+                    continue
+                x1 = bboxes[i][0]
+                y1 = bboxes[i][1]
+                x2 = bboxes[i][2]
+                y2 = bboxes[i][3]
+                lines += "{},{},{},{},{},{},".format(category_id, score, x1, y1, x2, y2)
+                for j in range(4):
+                    if keypoint_cls[i][j] == 1:
+                        lines += "{},{},{}, ".format(
+                            keypoint_reg[i][0 + j*2], keypoint_reg[i][1 + j*2], 1)
+                    else:
+                        lines += "{},{},{},".format(
+                            0, 0, 0, 0, 0)
+                lines += "\n"
+                
+                
+        return vis_res, lines
         
 
 def visual_kp_det(img, kp_det, img_info, cls_conf=0.25):
@@ -233,32 +325,85 @@ def visual_kp_det(img, kp_det, img_info, cls_conf=0.25):
     return img
         
 
-def image_demo(predictor, vis_folder, path, current_time, save_result):
+# def image_demo(predictor, vis_folder, path, current_time, save_result):
+#     if os.path.isdir(path):
+#         files = get_image_list(path)
+#     else:
+#         files = [path]
+#     files.sort()
+#     for image_name in files:
+#         outputs, kp_det, img_info = predictor.inference(image_name)
+#         if save_result:
+#             save_folder = os.path.join(
+#                 vis_folder, time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
+#             )
+#             save_img_name = image_name[len(path):len(image_name)]
+#             # save_file_name = os.path.join(save_folder, sub_dir, os.path.basename(image_name))
+#             save_file_name = os.path.join(save_folder, save_img_name)
+#             os.makedirs(os.path.split(save_file_name)[0], exist_ok=True) 
+#         if outputs[0] is None:
+#             save_img = cv2.imread(image_name)
+#             logger.info("Saving detection result in {}".format(save_file_name))
+#             cv2.imwrite(save_file_name, save_img)
+#             continue
+        
+#         match_result = match_keypoints(outputs[0], kp_det[0], 0.25, img_info)
+#         result_image, lines = predictor.visual_det_kp(match_result, img_info, predictor.confthre)
+#         # visual_kp_det(result_image, kp_det[0], img_info, predictor.confthre)
+#         if save_result:
+#             logger.info("Saving detection result in {}".format(save_file_name))
+#             cv2.imwrite(save_file_name, result_image)
+#         ch = cv2.waitKey(0)
+#         if ch == 27 or ch == ord("q") or ch == ord("Q"):
+            # break
+def image_demo(predictor, vis_folder, csv_folder, path, current_time, save_result, save_as_txt, filter_15pixel):
     if os.path.isdir(path):
         files = get_image_list(path)
     else:
         files = [path]
     files.sort()
-    for image_name in files:
-        outputs, kp_det, img_info = predictor.inference(image_name)
-        if outputs[0] is None:
-            continue
-        
-        match_result = match_keypoints(outputs[0], kp_det[0], 0.25, img_info)
-        result_image = predictor.visual_det_kp(match_result, img_info, predictor.confthre)
-        visual_kp_det(result_image, kp_det[0], img_info, predictor.confthre)
-        if save_result:
-            save_folder = os.path.join(
-                vis_folder, time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
-            )
-            os.makedirs(save_folder, exist_ok=True)
-            save_file_name = os.path.join(save_folder, os.path.basename(image_name))
-            logger.info("Saving detection result in {}".format(save_file_name))
-            cv2.imwrite(save_file_name, result_image)
-        ch = cv2.waitKey(0)
-        if ch == 27 or ch == ord("q") or ch == ord("Q"):
-            break
 
+    with trange(len(files)) as t:
+        for i in t:
+            image_name = files[i]
+            post_pix = {}
+            outputs, kp_det, img_info = predictor.inference(image_name, post_pix)
+            match_result = match_keypoints(outputs[0], kp_det[0], 0.25, img_info, is_merge=False)
+            
+            result_image, res_lines = predictor.visual_det_kp(
+                match_result, img_info, predictor.confthre, filter_15pixel, 15.0)
+            base_file_name = image_name[len(path)+1:]
+            base_sub_dir = os.path.split(base_file_name)[0]
+            t.set_description("INFO {}:".format(i))
+            if save_result:
+                save_folder = os.path.join(
+                    vis_folder, time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
+                )
+                save_file_name = os.path.join(save_folder, base_sub_dir)
+                os.makedirs(save_file_name, exist_ok=True)
+                save_file_name = os.path.join(save_file_name, os.path.basename(image_name))
+                post_pix["det_res_path"] = save_file_name
+                # logger.info("Saving detection result in {}".format(save_file_name))
+                cv2.imwrite(save_file_name, result_image)
+            if True:
+                image_name_pre = os.path.splitext(os.path.basename(image_name))[0]
+                save_folder = os.path.join(
+                    csv_folder, time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
+                )
+                txt_path = os.path.join(save_folder, base_sub_dir)
+                os.makedirs(txt_path, exist_ok=True)
+                if save_as_txt:
+                    txt_path = os.path.join(txt_path, image_name_pre+".txt")
+                else:
+                    txt_path = os.path.join(txt_path, image_name_pre+".csv")
+                with open(txt_path, 'w') as f:
+                    if save_as_txt:
+                        res_lines = res_lines.replace(",", " ")
+                    f.writelines(res_lines)
+            t.set_postfix(post_pix)
+            ch = cv2.waitKey(0)
+            if ch == 27 or ch == ord("q") or ch == ord("Q"):
+                break
 
 def imageflow_demo(predictor, vis_folder, current_time, args):
     cap = cv2.VideoCapture(args.path if args.demo == "video" else args.camid)
@@ -301,10 +446,11 @@ def main(exp, args):
     vis_folder = None
     if args.save_result:
         vis_folder = os.path.join(file_name, "vis_res")
+        csv_folder = os.path.join(file_name, "csv_res")
         os.makedirs(vis_folder, exist_ok=True)
+        os.makedirs(csv_folder, exist_ok=True)
 
-    if args.trt:
-        args.device = "gpu"
+    args.device = "gpu"
 
     logger.info("Args: {}".format(args))
 
@@ -317,7 +463,7 @@ def main(exp, args):
 
     model = exp.get_model()
     logger.info("Model Summary: {}".format(get_model_info(model, exp.test_size)))
-
+    logger.info("The test size: {}".format(exp.test_size))
     if args.device == "gpu":
         model.cuda()
         if args.fp16:
@@ -338,29 +484,16 @@ def main(exp, args):
     if args.fuse:
         logger.info("\tFusing model...")
         model = fuse_model(model)
-
-    if args.trt:
-        assert not args.fuse, "TensorRT model is not support model fusing!"
-        trt_file = os.path.join(file_name, "model_trt.pth")
-        assert os.path.exists(
-            trt_file
-        ), "TensorRT model is not found!\n Run python3 tools/trt.py first!"
-        model.head.decode_in_inference = False
-        decoder = model.head.decode_outputs
-        logger.info("Using TensorRT to inference")
-    else:
-        trt_file = None
-        decoder = None
-
+    trt_file = None
+    decoder = None
     predictor = Predictor(
         model, exp, HOLO_CLASSES, trt_file, decoder,
         args.device, args.fp16, args.legacy,
     )
     current_time = time.localtime()
-    if args.demo == "image":
-        image_demo(predictor, vis_folder, args.path, current_time, args.save_result)
-    elif args.demo == "video" or args.demo == "webcam":
-        imageflow_demo(predictor, vis_folder, current_time, args)
+    image_demo(predictor, vis_folder,csv_folder, args.path, current_time, 
+               args.save_result,args.txt, args.filter_15pix)
+
 
 
 if __name__ == "__main__":
