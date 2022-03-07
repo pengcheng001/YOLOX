@@ -168,7 +168,7 @@ class COCODataset(Dataset):
                                     obj['keypoints'][kp_ind][1] - kp_bbox_rad_h,
                                     obj['keypoints'][kp_ind][0] + kp_bbox_rad_w,
                                     obj['keypoints'][kp_ind][1] + kp_bbox_rad_h,
-                                    kp_ind + len(self.class_ids) -1,
+                                    kp_ind + len(self.class_ids),
                                 ]
                                 ann_kp_ad_dets.append(kp_bbox)
                 else:
