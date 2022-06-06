@@ -16,6 +16,7 @@ from yolox.utils import configure_nccl, configure_omp, get_num_devices
 import torch.multiprocessing
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+
 def make_parser():
     parser = argparse.ArgumentParser("YOLOX train parser")
     parser.add_argument("-expn", "--experiment-name", type=str, default=None)
@@ -92,6 +93,13 @@ def make_parser():
         help="Modify config options using the command-line",
         default=None,
         nargs=argparse.REMAINDER,
+    )
+    parser.add_argument(
+        "--legacy",
+        dest="legacy",
+        default=False,
+        action="store_true",
+        help="To be compatible with older versions",
     )
     return parser
 

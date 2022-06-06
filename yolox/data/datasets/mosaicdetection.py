@@ -170,10 +170,10 @@ class MosaicDetection(Dataset):
                     img,
                     label,
                     target_size=(input_w, input_h),
-                    degrees=20.,
+                    degrees=2.,
                     translate=0.1,
                     scales=(1.2, 1.2),
-                    shear=2.0
+                    shear=0.2
                 )
             img_info = (img.shape[1], img.shape[0])
             img, label = self.preproc(img, label, self.input_dim)

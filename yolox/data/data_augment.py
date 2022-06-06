@@ -95,9 +95,9 @@ def apply_affine_to_bboxes(targets, target_size, M, scale):
 
     keypoints = np.ones((num_gts * 4, 3))
     keypoints[:, :2] = targets[:, [5, 6, 8, 9, 11, 12, 14, 15]].reshape(
-        num_gts * 4, 2 
+        num_gts * 4, 2
     )
-    
+
     keypoints = keypoints @ M.T  # apply affine transform
     keypoints = keypoints.reshape(num_gts, 8)
     # create new boxes
@@ -114,9 +114,9 @@ def apply_affine_to_bboxes(targets, target_size, M, scale):
     # clip boxes
     new_bboxes[:, 0::2] = new_bboxes[:, 0::2].clip(0, twidth)
     new_bboxes[:, 1::2] = new_bboxes[:, 1::2].clip(0, theight)
-    
-    filtered_flag =  (keypoints[:, ::2] < 0) + (keypoints[:, ::2] > twidth) + \
-                         (keypoints[:, 1::2] < 0) + (keypoints[:, 1::2] > theight)
+
+    filtered_flag = (keypoints[:, ::2] < 0) + (keypoints[:, ::2] > twidth) + \
+        (keypoints[:, 1::2] < 0) + (keypoints[:, 1::2] > theight)
     targets[:, 7::3][filtered_flag] = 0
     targets[:, [5, 6, 8, 9, 11, 12, 14, 15]] = keypoints
     targets[:, :4] = new_bboxes
@@ -147,11 +147,11 @@ def random_affine(
 def _mirror(image, boxes, kepoints, prob=0.5):
     _, width, _ = image.shape
     if random.random() < prob:
-    # if True:
+        # if True:
         image = image[:, ::-1]
         boxes[:, 0::2] = width - boxes[:, 2::-2]
         res_temp = np.zeros(kepoints.shape)
-        kepoints[:, 0::3] =  width -  kepoints[:, 0::3]
+        kepoints[:, 0::3] = width - kepoints[:, 0::3]
         res_temp[:, 0:3] = kepoints[:, 3:6]
         res_temp[:, 3:6] = kepoints[:, 0:3]
         res_temp[:, 6:9] = kepoints[:, 9:12]
@@ -180,10 +180,11 @@ def preproc(img, input_size, swap=(2, 0, 1)):
 
 
 class TrainTransform:
-    def __init__(self, max_labels=50, flip_prob=0.5, hsv_prob=1.0):
+    def __init__(self, max_labels=50, flip_prob=0.5, hsv_prob=1.0, legacy=False):
         self.max_labels = max_labels
         self.flip_prob = flip_prob
         self.hsv_prob = hsv_prob
+        self.legacy = legacy
 
     def __call__(self, image, targets, input_dim):
         boxes = targets[:, :4].copy()
@@ -192,6 +193,10 @@ class TrainTransform:
         if len(boxes) == 0:
             targets = np.zeros((self.max_labels, 17), dtype=np.float32)
             image, r_o = preproc(image, input_dim)
+            if self.legacy:
+                image /= 255.0
+                image -= np.array([0.46548806, 0.45910544, 0.43972144]).reshape(3, 1, 1)
+                image /= np.array([0.17848016, 0.15991929, 0.16030847]).reshape(3, 1, 1)
             return image, targets
 
         image_o = image.copy()
@@ -206,8 +211,8 @@ class TrainTransform:
         if random.random() < self.hsv_prob:
             augment_hsv(image)
         # image_t, boxes = _mirror(image, boxes, self.flip_prob)
-        image_t, boxes, keypoints = _mirror(image, boxes,keypoints, self.flip_prob)
-        
+        image_t, boxes, keypoints = _mirror(image, boxes, keypoints, self.flip_prob)
+
         height, width, _ = image_t.shape
         image_t, r_ = preproc(image_t, input_dim)
         # boxes [xyxy] 2 [cx,cy,w,h]
@@ -220,7 +225,7 @@ class TrainTransform:
         boxes_t = boxes[mask_b]
         labels_t = labels[mask_b]
         keypoints_t = keypoints[mask_b]
-        
+
         if len(boxes_t) == 0:
             image_t, r_o = preproc(image_o, input_dim)
             boxes_o *= r_o
@@ -236,6 +241,11 @@ class TrainTransform:
             : self.max_labels
         ]
         padded_labels = np.ascontiguousarray(padded_labels, dtype=np.float32)
+        if self.legacy:
+            image_t /= 255.0
+
+            image_t -= np.array([0.46548806, 0.45910544, 0.43972144]).reshape(3, 1, 1)
+            image_t /= np.array([0.17848016, 0.15991929, 0.16030847]).reshape(3, 1, 1)
         return image_t, padded_labels
 
 
@@ -267,6 +277,6 @@ class ValTransform:
         if self.legacy:
             img = img[::-1, :, :].copy()
             img /= 255.0
-            img -= np.array([0.485, 0.456, 0.406]).reshape(3, 1, 1)
-            img /= np.array([0.229, 0.224, 0.225]).reshape(3, 1, 1)
+            img -= np.array([0.46548806, 0.45910544, 0.43972144]).reshape(3, 1, 1)
+            img /= np.array([0.17848016, 0.15991929, 0.16030847]).reshape(3, 1, 1)
         return img, np.zeros((1, 5))

@@ -31,6 +31,7 @@ def filter_box(output, scale_range):
     keep = (w * h > min_scale * min_scale) & (w * h < max_scale * max_scale)
     return output[keep]
 
+
 def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False):
     box_corner = prediction.new(prediction.shape)
     box_corner[:, :, 0] = prediction[:, :, 0] - prediction[:, :, 2] / 2
@@ -88,6 +89,7 @@ def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agn
 
     return output
 
+
 def euclidean_metric(matrix_a, matrix_b):
     max_rows_count = max(len(matrix_a), len(matrix_b))
     append_count_matrix_a = max_rows_count-len(matrix_a)
@@ -106,18 +108,20 @@ def euclidean_metric(matrix_a, matrix_b):
     Dis = cs_2_se + fs_2_se.T - 2 * TM3
     return Dis
 
+
 def format_keypoints(bboxes_kp_, conf):
     bboxes_kp = bboxes_kp_.clone().cpu()
     bboxes = bboxes_kp[:, 0:4]
     keypoint_reg = bboxes_kp[:, 7:15]
     keypoint_cls = bboxes_kp[:, 15:19]
-    categroy = bboxes_kp[:,6]
+    categroy = bboxes_kp[:, 6]
     # bboxes /= ratio
     # keypoint_reg /= ratio
-    scores = bboxes_kp[:,4] * bboxes_kp[:,5]
+    scores = bboxes_kp[:, 4] * bboxes_kp[:, 5]
     slected_bbox_flag = (scores > conf)
-    
-def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750, is_merge=True):
+
+
+def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=900, is_merge=True):
     # bboxes_kp ordered as (x1, y1, x2, y2, obj_conf, class_pred, k1_reg, k2_reg, k3_reg, k4_reg, k1_vis, k2_vis, k3_vis, k4_vis)
     # det_kp ordered as (x, y, obj_conf, class_conf, class_pred)
     if bboxes_kp_ is None:
@@ -128,10 +132,10 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750, is
     bboxes = bboxes_kp[:, 0:4]
     keypoint_reg = bboxes_kp[:, 7:15]
     keypoint_cls = bboxes_kp[:, 15:19]
-    categroy = bboxes_kp[:,6]
+    categroy = bboxes_kp[:, 6]
     # bboxes /= ratio
     # keypoint_reg /= ratio
-    scores = bboxes_kp[:,4] * bboxes_kp[:,5]
+    scores = bboxes_kp[:, 4] * bboxes_kp[:, 5]
 
     slected_bbox_flag = (scores > conf)
     slected_bbox = bboxes[slected_bbox_flag]
@@ -140,16 +144,16 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750, is
     slected_kp_cls = keypoint_cls[slected_bbox_flag]
     slected_scores = scores[slected_bbox_flag].unsqueeze(1)
     # x,y,x,y,cate,socre,kp_reg, kp_vis
-    slected_bbox_kp = torch.cat((slected_bbox, slected_category, slected_scores, slected_kp_reg, slected_kp_cls),1)
+    slected_bbox_kp = torch.cat((slected_bbox, slected_category,
+                                slected_scores, slected_kp_reg, slected_kp_cls), 1)
     if is_merge is False:
         return slected_bbox_kp
     # match_fg =  np.zeros((slected_bbox_kp.shape[0], 12))
-   
+
     det_kp_scores = det_kp[:, 2] * det_kp[:, 3]
     slected_det_kp_fg = (det_kp_scores > conf)
-    slected_det_kp =det_kp[slected_det_kp_fg]
-    
-    
+    slected_det_kp = det_kp[slected_det_kp_fg]
+
     fg_vis_kp1 = (slected_bbox_kp[:, 14] == 1)
     reg_kp1_matrix = slected_bbox_kp[fg_vis_kp1][:, 6:8].numpy()
     fg_vis_kp2 = (slected_bbox_kp[:, 15] == 1)
@@ -158,56 +162,55 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750, is
     reg_kp3_matrix = slected_bbox_kp[fg_vis_kp3][:, 10:12].numpy()
     fg_vis_kp4 = (slected_bbox_kp[:, 17] == 1)
     reg_kp4_matrix = slected_bbox_kp[fg_vis_kp4][:, 12:14].numpy()
-    
-    fg_kp1 = (slected_det_kp[:,4] == 9)
-    det_kp1_matrix = slected_det_kp[fg_kp1][:,0:2].numpy()
+
+    fg_kp1 = (slected_det_kp[:, 4] == 9)
+    det_kp1_matrix = slected_det_kp[fg_kp1][:, 0:2].numpy()
     dis_kp1 = euclidean_metric(det_kp1_matrix, reg_kp1_matrix)
-    if len(dis_kp1) >=1:
-        min_index = np.argmin(dis_kp1,1)
+    if len(dis_kp1) >= 1:
+        min_index = np.argmin(dis_kp1, 1)
         for i in range(len(min_index)):
             min_dis = dis_kp1[i][min_index[i]]
             if min_dis < min_matched_dis:
-                reg_kp1_matrix[min_index[i]]=det_kp1_matrix[i]
-  
-        slected_bbox_kp[:, 6:8][fg_vis_kp1] = torch.from_numpy(reg_kp1_matrix) 
-    fg_kp2 = (slected_det_kp[:,4] == 10)
-    det_kp2_matrix = slected_det_kp[fg_kp2][:,0:2].numpy()
+                reg_kp1_matrix[min_index[i]] = det_kp1_matrix[i]
+
+        slected_bbox_kp[:, 6:8][fg_vis_kp1] = torch.from_numpy(reg_kp1_matrix)
+    fg_kp2 = (slected_det_kp[:, 4] == 10)
+    det_kp2_matrix = slected_det_kp[fg_kp2][:, 0:2].numpy()
     dis_kp2 = euclidean_metric(det_kp2_matrix, reg_kp2_matrix)
-    if len(dis_kp2) >=1:
-        min_index = np.argmin(dis_kp2,1)
+    if len(dis_kp2) >= 1:
+        min_index = np.argmin(dis_kp2, 1)
         for i in range(len(min_index)):
             min_dis = dis_kp2[i][min_index[i]]
             if min_dis < min_matched_dis:
-                reg_kp2_matrix[min_index[i]]=det_kp2_matrix[i]
+                reg_kp2_matrix[min_index[i]] = det_kp2_matrix[i]
         slected_bbox_kp[:, 8:10][fg_vis_kp2] = torch.from_numpy(reg_kp2_matrix)
-    
 
     fg_kp3 = (slected_det_kp[:, 4] == 11)
-    det_kp3_matrix = slected_det_kp[fg_kp3][:,0:2].numpy()
+    det_kp3_matrix = slected_det_kp[fg_kp3][:, 0:2].numpy()
     dis_kp3 = euclidean_metric(det_kp3_matrix, reg_kp3_matrix)
-    
-    if len(dis_kp3) >=1:
-        min_index = np.argmin(dis_kp3,1)
+
+    if len(dis_kp3) >= 1:
+        min_index = np.argmin(dis_kp3, 1)
         for i in range(len(min_index)):
             min_dis = dis_kp3[i][min_index[i]]
             if min_dis < min_matched_dis:
-                reg_kp3_matrix[min_index[i]]=det_kp3_matrix[i]
+                reg_kp3_matrix[min_index[i]] = det_kp3_matrix[i]
         slected_bbox_kp[:, 10:12][fg_vis_kp3] = torch.from_numpy(reg_kp3_matrix)
-    
-    fg_kp4 = (slected_det_kp[:,4] == 12)
-    det_kp4_matrix = slected_det_kp[fg_kp4][:,0:2].numpy()
+
+    fg_kp4 = (slected_det_kp[:, 4] == 12)
+    det_kp4_matrix = slected_det_kp[fg_kp4][:, 0:2].numpy()
     dis_kp4 = euclidean_metric(det_kp4_matrix, reg_kp4_matrix)
-    if len(dis_kp4) >=1:
-        min_index = np.argmin(dis_kp4,1)
+    if len(dis_kp4) >= 1:
+        min_index = np.argmin(dis_kp4, 1)
         for i in range(len(min_index)):
             min_dis = dis_kp4[i][min_index[i]]
             if min_dis < min_matched_dis:
-                reg_kp4_matrix[min_index[i]]=det_kp4_matrix[i]
+                reg_kp4_matrix[min_index[i]] = det_kp4_matrix[i]
         slected_bbox_kp[:, 12:14][fg_vis_kp4] = torch.from_numpy(reg_kp4_matrix)
 
     # det_kp_xy = slected_det_kp[:,0:2] / ratio
     # slected_det_kp[:, 0:2] = det_kp_xy
-    
+
     # outline_kp = []
     # interact_kp = []
     # solo_kp = []
@@ -216,13 +219,13 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750, is
     #     kp_y  = slected_det_kp[i][1]
     #     more_than_x0 =  (kp_x - slected_bbox_kp[:, 0] > -4)
     #     less_than_x1 =  (slected_bbox_kp[:, 2] - kp_x > -4)
-        
+
     #     innner_x = less_than_x1 & more_than_x0
     #     more_than_y0 =  (kp_y - slected_bbox_kp[:, 1] > -20)
     #     less_than_y1 =  (slected_bbox_kp[:, 3] - kp_y > -20)
-    #     inner_y = less_than_y1 & more_than_y0 
+    #     inner_y = less_than_y1 & more_than_y0
     #     inner = inner_y & innner_x
-        
+
     #     if torch.sum(inner) >=1 :
     #         bbox_index = (inner ==True).nonzero(as_tuple=True)[0].cpu().numpy()[0]
     #         solo_kp.append([bbox_index, slected_det_kp[i].cpu().numpy()])
@@ -256,9 +259,9 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=750, is
     #             if sub_dis1 < sub_dis0:
     #                 slected_bbox_kp[bbox_index][kp_index:kp_index+2]=kp_xy
     return slected_bbox_kp
-  
 
-def postprocess_kp_det(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False,  kp_det_cls=[9,10,11,12]):
+
+def postprocess_kp_det(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False,  kp_det_cls=[11, 12, 13, 14]):
     box_corner = prediction.new(prediction.shape)
     box_corner[:, :, 0] = prediction[:, :, 0] - prediction[:, :, 2] / 2
     box_corner[:, :, 1] = prediction[:, :, 1] - prediction[:, :, 3] / 2
@@ -291,6 +294,7 @@ def postprocess_kp_det(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, cl
         # Detections ordered as (x1, y1, x2, y2, obj_conf, class_conf, class_pred, k1_reg, k2_reg, k3_reg, k4_reg, k1_vis, k2_vis, k3_vis, k4_vis)
         detections = torch.cat((image_pred[:, :5], class_conf, class_pred.float(
         ), image_pred[:, 5 + num_classes:5 + num_classes + 8], keypoint_class_pre_k1, keypoint_class_pre_k2, keypoint_class_pre_k3, keypoint_class_pre_k4), 1)
+        # logger.error(detections.shape)
         detections = detections[conf_mask]
         if not detections.size(0):
             continue
@@ -311,23 +315,22 @@ def postprocess_kp_det(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, cl
 
         detections = detections[nms_out_index]
         kp_fg = None
-        for kp_cls in  kp_det_cls:
-            kp_fg_cur =  detections[:, 6] ==  kp_cls
+        for kp_cls in kp_det_cls:
+            kp_fg_cur = detections[:, 6] == kp_cls
             if kp_fg is None:
                 kp_fg = kp_fg_cur
             else:
                 kp_fg += kp_fg_cur
         obj_fg = (kp_fg == False)
         kp_det_out = detections[kp_fg]
-        #kp det (x, y, obj_conf, cls_conf, cls_pre)
+        # kp det (x, y, obj_conf, cls_conf, cls_pre)
         kp_point_det = kp_det_out.new_ones((kp_det_out.shape[0], 5))
-    
-        kp_point_det[:,0] = ((kp_det_out[:,0] + kp_det_out[:,2]) / 2)
-        kp_point_det[:,1] = ((kp_det_out[:,1] + kp_det_out[:,3]) / 2)
-        kp_point_det[:,2] = kp_det_out[:,4]
-        kp_point_det[:,3] = kp_det_out[:,5]
-        kp_point_det[:,4] = kp_det_out[:,6]
-        
+
+        kp_point_det[:, 0] = ((kp_det_out[:, 0] + kp_det_out[:, 2]) / 2)
+        kp_point_det[:, 1] = ((kp_det_out[:, 1] + kp_det_out[:, 3]) / 2)
+        kp_point_det[:, 2] = kp_det_out[:, 4]
+        kp_point_det[:, 3] = kp_det_out[:, 5]
+        kp_point_det[:, 4] = kp_det_out[:, 6]
 
         if output[i] is None:
             output[i] = detections[obj_fg]
@@ -337,9 +340,7 @@ def postprocess_kp_det(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, cl
             kp_output[i] = kp_point_det
         else:
             kp_output[i] = torch.cat((kp_output[i], kp_point_det))
-
     return output, kp_output
-
 
 
 def bboxes_iou(bboxes_a, bboxes_b, xyxy=True):

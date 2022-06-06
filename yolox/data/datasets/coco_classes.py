@@ -2,25 +2,30 @@
 # -*- coding:utf-8 -*-
 # Copyright (c) Megvii, Inc. and its affiliates.
 
-HOLO_CLASSES=(
-    'Truck', 
-    'Car', 
+HOLO_CLASSES = (
+    'Truck',
+    'Car',
     'Huge_animal',
-    'Road_block', 
-    'Cycle', 
+    'Road_block',
+    'Cycle',
     'Pedestrian',
-    'Water_Filled_Barrier', 
-    'Unkown', 
-    'Tricycle', 
-    'Cone', 
-    'Bus', 
-    'Emergency_vehicle', 
+    'Water_Filled_Barrier',
+    'Unkown',
+    'Tricycle',
+    'Cone',
+    'Bus',
+    'Emergency_vehicle',
     'Warning_Triangle',
     'kp1',
     'kp2',
     'kp3',
     'kp4',
 )
+HOLO_CLASSES = ['vehicle', 'tricycle',  'cycle',  'pedestrian', 'cone', 'water_horse', 'anti_collision_bar', 'ground_lock', 'barrier_gate', 'wheel_rod',
+                'speed_bump', 'kp1',
+                'kp2',
+                'kp3',
+                'kp4']
 
 COCO_CLASSES = (
     "person",

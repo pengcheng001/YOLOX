@@ -17,20 +17,21 @@ class Exp(BaseExp):
         super().__init__()
 
         # ---------------- model config ---------------- #
-        self.num_classes = 13
+        self.num_classes = 11+4
         self.depth = 1.00
         self.width = 1.00
-        self.act = 'silu'
+        self.act = 'relu'
+        self.export_tda4 = False
 
         # ---------------- dataloader config ---------------- #
         # set worker to 4 for shorter dataloader init time
-        self.data_num_workers = 8
-        self.input_size = (384, 768)  # (height, width)
+        self.data_num_workers = 64
+        self.input_size = (352, 608)  # (height, width)
 
         # Actual multiscale ranges: [640-5*32, 640+5*32].
         # To disable multiscale training, set the
         # self.multiscale_range to 0.
-        self.multiscale_range = 0
+        self.multiscale_range = 3
         # You can uncomment this line to specify a multiscale range
         # self.random_size = (14, 26)
         self.data_dir = None
@@ -42,21 +43,21 @@ class Exp(BaseExp):
         self.mixup_prob = 1.0
         self.hsv_prob = 1.0
         self.flip_prob = 0.5
-        self.degrees = 10.0
+        self.degrees = 2.0
         self.translate = 0.1
         self.mosaic_scale = (0.1, 2)
         self.mixup_scale = (0.5, 1.5)
-        self.shear = 2.0
+        self.shear = 0.5
         self.enable_mixup = True
 
         # --------------  training config --------------------- #
         self.warmup_epochs = 5
-        self.max_epoch = 100
+        self.max_epoch = 300
         self.warmup_lr = 0
-        self.basic_lr_per_img = 0.01 / 64.0
+        self.basic_lr_per_img = 0.001 / 256.0
         self.scheduler = "yoloxwarmcos"
-        self.no_aug_epochs = 75
-        self.min_lr_ratio = 0.05
+        self.no_aug_epochs = 230
+        self.min_lr_ratio = 0.005
         self.ema = True
 
         self.weight_decay = 5e-8
@@ -66,9 +67,9 @@ class Exp(BaseExp):
         self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
 
         # -----------------  testing config ------------------ #
-        self.test_size = (384, 768)
-        self.test_conf = 0.01
-        self.nmsthre = 0.65
+        self.test_size = (352, 608)
+        self.test_conf = 0.25
+        self.nmsthre = 0.45
 
     def get_model(self):
         from yolox.models import YOLOX, YOLOPAFPN, YOLOXHead
@@ -82,7 +83,8 @@ class Exp(BaseExp):
         if getattr(self, "model", None) is None:
             in_channels = [256, 512, 1024]
             backbone = YOLOPAFPN(self.depth, self.width, in_channels=in_channels, act=self.act)
-            head = YOLOXHead(self.num_classes, self.width, in_channels=in_channels, act=self.act)
+            head = YOLOXHead(self.num_classes, self.width, in_channels=in_channels,
+                             act=self.act, export_tda4=self.export_tda4)
             self.model = YOLOX(backbone, head)
 
         self.model.apply(init_yolo)
@@ -90,7 +92,7 @@ class Exp(BaseExp):
         return self.model
 
     def get_data_loader(
-        self, batch_size, is_distributed, no_aug=False, cache_img=False, filter_bbox=False, min_input_h=15
+        self, batch_size, is_distributed, no_aug=False, cache_img=False, filter_bbox=False, min_input_h=15, legacy=False
     ):
         from yolox.data import (
             COCODataset,
@@ -115,7 +117,8 @@ class Exp(BaseExp):
                 preproc=TrainTransform(
                     max_labels=50,
                     flip_prob=self.flip_prob,
-                    hsv_prob=self.hsv_prob),
+                    hsv_prob=self.hsv_prob,
+                    legacy=legacy,),
                 cache=cache_img,
                 filter_bbox=filter_bbox,
                 min_input_h=15,
@@ -127,7 +130,8 @@ class Exp(BaseExp):
             preproc=TrainTransform(
                 max_labels=120,
                 flip_prob=self.flip_prob,
-                hsv_prob=self.hsv_prob),
+                hsv_prob=self.hsv_prob,
+                legacy=legacy,),
             degrees=self.degrees,
             translate=self.translate,
             mosaic_scale=self.mosaic_scale,
@@ -191,9 +195,124 @@ class Exp(BaseExp):
             inputs = nn.functional.interpolate(
                 inputs, size=tsize, mode="bilinear", align_corners=False
             )
-            targets[..., 1::2] = targets[..., 1::2] * scale_x
-            targets[..., 2::2] = targets[..., 2::2] * scale_y
+            targets[..., 1:4:2] = targets[..., 1:4:2] * scale_x
+            targets[..., 5:17:3] = targets[..., 5:17:3] * scale_x
+            targets[..., 2:5:2] = targets[..., 2:5:2] * scale_y
+            targets[..., 6:17:3] = targets[..., 6:17:3] * scale_y
         return inputs, targets
+
+    def filter_bbox(self, input, target):
+
+        filter_on = True
+        if filter_on:
+            input_height = input.shape[2]
+            filter_height = input_height / 3
+            batch_size = target.shape[0]
+            new_target = target.new_zeros(target.shape)
+            nlabel = (target.sum(dim=2) > 0).sum(dim=1)
+            for batch in range(batch_size):
+                gt_num = nlabel[batch]
+                if gt_num == 0:
+                    continue
+                gt = target[batch, :gt_num, :]
+                # for vehicles
+                vehicle_flag = gt[:, 0] == 0
+                tricycle_flag = gt[:, 0] == 1
+                cycle_flag = gt[:, 0] == 2
+                barrier_gate_falg = gt[:, 0] == 8
+                vehicles_flag = (vehicle_flag + tricycle_flag + cycle_flag + barrier_gate_falg)
+                vehicles_gt = gt[vehicles_flag]
+                # if 0 == vehicles_gt.shape[0]:
+                #     vehicles_filtered = vehicles_gt
+                # else:
+                vehicles_area_flag = (vehicles_gt[:, 3]*vehicles_gt[:, 4]) > 650
+                # width_height_ratio = (vehicles_gt[:, 3]/vehicles_gt[:, 4]) > 10
+                # vehicles_filtered = vehicles_gt[(vehicles_area_flag & width_height_ratio)]
+                vehicles_filtered = vehicles_gt[(vehicles_area_flag)]
+
+                # for pedenstrin
+                pedenstrain_gt_flag = gt[:, 0] == 3
+                pedenstrain_gt = gt[pedenstrain_gt_flag]
+                # if pedenstrain_gt.shape[0] == 0:
+                #     pedenstrain_filter_gt = pedenstrain_gt
+                # else:
+                pedenstrain_filter_width_flag = (pedenstrain_gt[:, 3] > 15)
+                # pedenstrain_filter_area_flag = (pedenstrain_gt[:, 3] * pedenstrain_gt[:, 4]) > 70
+                pedenstrain_filter_area_flag = (pedenstrain_gt[:, 3] * pedenstrain_gt[:, 4]) > 300
+                pedenstrain_gt_filter_flag = pedenstrain_filter_width_flag & pedenstrain_filter_area_flag
+                pedenstrain_filter_gt = pedenstrain_gt[pedenstrain_gt_filter_flag]
+
+                # cone anti_collision_bar water_horse
+                cone_gt_flag = gt[:, 0] == 4
+                anti_collision_bar_gt_flag = gt[:, 0] == 6
+                water_horse = gt[:, 0] == 5
+                cones_flag = (cone_gt_flag + anti_collision_bar_gt_flag + water_horse)
+                cones_gt = gt[cones_flag]
+                # if 0 == cones_gt.shape[0]:
+                #     cones_filter_gt = cones_gt
+                # else:
+                # cones_area_flag = ((cones_gt[:, 3] * cones_gt[:, 4]) > 50)
+                cones_area_flag = ((cones_gt[:, 3] * cones_gt[:, 4]) > 200)
+                cones_filter_gt = cones_gt[cones_area_flag]
+
+                # for ground lock
+                ground_lock_flag = (gt[:, 0] == 7)
+                ground_lock_gt = gt[ground_lock_flag]
+                # if 0 == cones_gt.shape[0]:
+                #     ground_lock_filter_gt = ground_lock_gt
+                # else:
+                ground_lock_bottom_flag = (
+                    (ground_lock_gt[:, 2] + (ground_lock_gt[:, 4]/2)) > filter_height)
+                ground_lock_area_flag = ((ground_lock_gt[:, 3] * ground_lock_gt[:, 4]) > 200)
+                # ground_lock_reamin_flag = (ground_lock_bottom_flag & ground_lock_area_flag)
+                ground_lock_filter_gt = ground_lock_gt[ground_lock_area_flag]
+
+                # for weel rod,speed_bump
+                weel_wod_flag = (gt[:, 0] == 9)
+                speed_bump_flag = (gt[:, 0] == 10)
+                weel_rods_flag = (weel_wod_flag + speed_bump_flag)
+                weel_rods_gt = gt[weel_rods_flag]
+
+                # weel_rods_bottom = ((weel_rods_gt[:,2] + (weel_rods_gt[:,4]/2)) > filter_height)
+                weel_rods_height_flag = (weel_rods_gt[:, 4] > 9)
+                weel_rods_width_flag = (weel_rods_gt[:, 3] > 9)
+                weel_rods_filter_gt = weel_rods_gt[(weel_rods_height_flag & weel_rods_width_flag)]
+                cat_target = torch.cat((vehicles_filtered, pedenstrain_filter_gt,
+                                        cones_filter_gt, weel_rods_filter_gt), 0)
+                #cat_target = torch.cat((vehicles_filtered, pedenstrain_filter_gt, cones_filter_gt), 0)
+                reamin_num = cat_target.shape[0]
+                new_target[batch, :reamin_num, :] = cat_target
+
+                # show
+                show = False
+                if show:
+                    inps_cpu = input.cpu().numpy()
+                    nlabel = (target.sum(dim=2) > 0).sum(dim=1)
+                    for b in range(batch_size):
+                        show_img = inps_cpu[b].transpose(1, 2, 0).astype(np.uint8)
+                        show_img = np.ascontiguousarray(show_img)
+                        gt_num = nlabel[b]
+                        for box_index in range(gt_num):
+                            show_bbox = new_target[b, box_index, 0:5].cpu().numpy()
+                            cate_id = show_bbox[0]
+                            x1 = int(show_bbox[1] - show_bbox[3] / 2)
+                            y1 = int(show_bbox[2] - show_bbox[4] / 2)
+
+                            x2 = int(show_bbox[1] + show_bbox[3] / 2)
+                            y2 = int(show_bbox[2] + show_bbox[4] / 2)
+                            cv2.rectangle(show_img, (x1, y1), (x2, y2), (0, 255, 0), 1)
+                            cv2.putText(show_img, str(show_bbox[0])[
+                                        0:4]+"-"+str(show_bbox[4])[0:4], (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
+                            # cv2.putText(show_img, str(show_bbox[4])[0:4],(x1+10, y1),cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0,0,255),1)
+
+                    debug_save_dir = '/home/pengcheng/code/yolox/debug_show/'
+                    global save_index
+                    cv2.imwrite(debug_save_dir+str(save_index)+'.jpeg', show_img)
+                    save_index += 1
+
+            return new_target
+        else:
+            return target
 
     def get_optimizer(self, batch_size):
         if "optimizer" not in self.__dict__:
@@ -247,6 +366,7 @@ class Exp(BaseExp):
             name="images" if not testdev else "test2017",
             img_size=self.test_size,
             preproc=ValTransform(legacy=legacy),
+            filter=True,
         )
 
         if is_distributed:

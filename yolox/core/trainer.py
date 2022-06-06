@@ -98,6 +98,7 @@ class Trainer:
         targets = targets.to(self.data_type)
         targets.requires_grad = False
         inps, targets = self.exp.preprocess(inps, targets, self.input_size)
+        targets = self.exp.filter_bbox(inps, targets)
         data_end_time = time.time()
 
         with torch.cuda.amp.autocast(enabled=self.amp_training):
@@ -151,7 +152,8 @@ class Trainer:
             no_aug=self.no_aug,
             cache_img=self.args.cache,
             filter_bbox=self.filter_box,
-            min_input_h=self.model_min_input_bbox
+            min_input_h=self.model_min_input_bbox,
+            legacy=self.args.legacy,
         )
 
         logger.info("init prefetcher, this might take one minute or less...")
@@ -176,7 +178,7 @@ class Trainer:
         self.model.train()
 
         self.evaluator = self.exp.get_evaluator(
-            batch_size=self.args.batch_size, is_distributed=self.is_distributed
+            batch_size=self.args.batch_size, is_distributed=self.is_distributed, legacy=self.args.legacy
         )
         # Tensorboard logger
         if self.rank == 0:

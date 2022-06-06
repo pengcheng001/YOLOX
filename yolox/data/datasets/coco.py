@@ -29,6 +29,8 @@ class COCODataset(Dataset):
         cache=False,
         filter_bbox=False,
         min_input_h=15,
+        class_num=11,
+        filter=False,
     ):
         """
         COCO dataset initialization. Annotation data are read into memory by COCO API.
@@ -41,10 +43,11 @@ class COCODataset(Dataset):
         """
         super().__init__(img_size)
         if data_dir is None:
-            data_dir = os.path.join(get_yolox_datadir(), "COCO")
+            data_dir = os.path.join(get_yolox_datadir(), "parking/HOLO_2D")
             # data_dir = os.path.join(get_yolox_datadir())
         self.data_dir = data_dir
         self.json_file = json_file
+        self.filter=filter
 
         logger.info(os.path.join(self.data_dir, "annotations", self.json_file))
         self.coco = COCO(os.path.join(self.data_dir, "annotations", self.json_file))
@@ -59,6 +62,7 @@ class COCODataset(Dataset):
         self.filter_bbox = filter_bbox
         self.min_input_h = min_input_h
         self.preproc = preproc
+        self.class_num = class_num
         self.annotations = self._load_coco_annotations()
         if cache:
             self._cache_images()
@@ -82,7 +86,7 @@ class COCODataset(Dataset):
         )
         max_h = self.img_size[0]
         max_w = self.img_size[1]
-        cache_file = self.data_dir + "/img_resized_cache_" + self.name + ".array"
+        cache_file = self.data_dir + "/img_resized_kp_as_det_cache_" + self.name + ".array"
         if not os.path.exists(cache_file):
             logger.info(
                 "Caching images for the first time. This might take about 20 minutes for COCO"
@@ -129,12 +133,17 @@ class COCODataset(Dataset):
         anno_ids = self.coco.getAnnIds(imgIds=[int(id_)], iscrowd=False)
         annotations = self.coco.loadAnns(anno_ids)
         objs = []
+        r = min(self.img_size[0] / height, self.img_size[1] / width)
         ann_kp_ad_dets = []
         for obj in annotations:
             x1 = np.max((0, obj["bbox"][0]))
             y1 = np.max((0, obj["bbox"][1]))
             x2 = np.min((width, x1 + np.max((0, obj["bbox"][2]))))
             y2 = np.min((height, y1 + np.max((0, obj["bbox"][3]))))
+            w = np.max((0, obj["bbox"][2]))
+            h = np.max((0, obj["bbox"][3]))
+            if obj["category_id"] > self.class_num:
+                continue
             if self.filter_bbox:
                 bbox_h = y2 - y1 + 1
                 bbox_w = x2 - x1 + 1
@@ -143,6 +152,22 @@ class COCODataset(Dataset):
                 h_size = bbox_h*(input_h/height)
                 w_size = bbox_w*(input_w/width)
                 if max(h_size, w_size) <= self.min_input_h:
+                    continue
+            if self.filter:
+                filter_height = self.img_size[0] / 3
+                cls = self.class_ids.index(obj["category_id"])
+                bbox_filter = [x1*r, y1*r, w*r, h*r]
+                if cls == 0 or cls == 1 or cls == 2 or cls == 8:
+                    if (bbox_filter[2] * bbox_filter[3]) <= 650:
+                        continue
+                if cls == 3 and bbox_filter[2] <= 15 and (bbox_filter[2] * bbox_filter[3]) <= 300:
+                    continue
+                if (cls == 4 or cls == 6 or cls == 5) and (bbox_filter[2] * bbox_filter[3]) <= 200:
+                    continue
+                # and ((bbox_filter[1] + bbox_filter[3]) <= filter_height):
+                if (cls == 7) and ((bbox_filter[2] * bbox_filter[3]) > 200):
+                    continue
+                if (cls == 9 or cls == 10) and ((bbox_filter[3] <= 9) or bbox_filter[2] <= 9):
                     continue
             if obj["area"] > 0 and x2 >= x1 and y2 >= y1:
                 bbox_h = y2 - y1 + 1
@@ -156,6 +181,10 @@ class COCODataset(Dataset):
                             [0, 0, 0],
                             [0, 0, 0],
                         ]
+                    elif len(obj['keypoints']) < 4:
+                        kp_count = len(obj['keypoints'])
+                        for i in range(kp_count, 4):
+                            obj['keypoints'].append([0, 0, 0])
                     else:
                         assert len(obj['keypoints']) == 4
                         for kp_ind in range(4):
@@ -168,7 +197,7 @@ class COCODataset(Dataset):
                                     obj['keypoints'][kp_ind][1] - kp_bbox_rad_h,
                                     obj['keypoints'][kp_ind][0] + kp_bbox_rad_w,
                                     obj['keypoints'][kp_ind][1] + kp_bbox_rad_h,
-                                    kp_ind + len(self.class_ids),
+                                    kp_ind + self.class_num,
                                 ]
                                 ann_kp_ad_dets.append(kp_bbox)
                 else:
@@ -184,7 +213,7 @@ class COCODataset(Dataset):
 
         res = np.zeros((num_objs, 17))
 
-        r = min(self.img_size[0] / height, self.img_size[1] / width)
+        
         for ix, obj in enumerate(objs):
             cls = self.class_ids.index(obj["category_id"])
             res[ix, 0: 4] = obj["clean_bbox"]
@@ -195,7 +224,7 @@ class COCODataset(Dataset):
 
         for kp_det_ind in range(len(objs), num_objs):
             kp_det = ann_kp_ad_dets[kp_det_ind - len(objs)]
-            res[kp_det_ind, :5] = kp_det
+            res[kp_det_ind, : 5] = kp_det
             # for ik in range(4):
             #     res[ix, ik*3+5: ik*3+8] = [0, 0, 0]
         res[:, : 4] *= r
@@ -247,7 +276,7 @@ class COCODataset(Dataset):
 
         return img, res.copy(), img_info, np.array([id_])
 
-    @Dataset.mosaic_getitem
+    @ Dataset.mosaic_getitem
     def __getitem__(self, index):
         """
         One image / label pair for the given index is picked up and pre-processed.

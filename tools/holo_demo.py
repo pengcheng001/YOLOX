@@ -55,8 +55,8 @@ def make_parser():
         type=str,
         help="device to run our model, can either be cpu or gpu",
     )
-    parser.add_argument("--conf", default=0.3, type=float, help="test conf")
-    parser.add_argument("--nms", default=0.3, type=float, help="test nms threshold")
+    parser.add_argument("--conf", default=0.25, type=float, help="test conf")
+    parser.add_argument("--nms", default=0.45, type=float, help="test nms threshold")
     parser.add_argument("--tsize", default=None, type=int, help="test img size")
     parser.add_argument(
         "--fp16",
@@ -111,6 +111,7 @@ def get_image_list(path):
             ext = os.path.splitext(apath)[1]
             if ext in IMAGE_EXT:
                 image_names.append(apath)
+    # logger.warning(image_names)
     return image_names
 
 
@@ -150,8 +151,12 @@ class Predictor(object):
         img_info = {"id": 0}
         if isinstance(img, str):
             img_info["file_name"] = os.path.basename(img)
-            img = cv2.imread(img)
-            img_show = img.copy()
+            img_path = img
+            img = cv2.imread(img_path)
+            try:
+                img_show = img.copy()
+            except:
+                logger.error(img_path)
         else:
             img_info["file_name"] = None
         height, width = img.shape[:2]
@@ -192,11 +197,59 @@ class Predictor(object):
             cv2.waitKey(0)
         return outputs, img_info
 
+    def whether_slected(self, bbox_in, cate_id, model_input_size, images_size):
+        model_input_height = model_input_size[0]
+        model_input_width = model_input_size[1]
+        image_size_h = images_size[0]
+        image_size_w = images_size[1]
+        down_sample_h_ratio = image_size_h / model_input_height
+        down_sample_w_ratio = image_size_w / model_input_width
+        filter_height = model_input_height / 3.0
+        bbox = bbox_in.copy()
+        # logger.info(bbox)
+        bbox[0] = bbox[0] / down_sample_w_ratio
+        bbox[2] = bbox[2] / down_sample_w_ratio
+        bbox[1] = bbox[1] / down_sample_h_ratio
+        bbox[3] = bbox[3] / down_sample_h_ratio
+        # for vehicles
+        if cate_id in [1, 2, 3, 9]:
+            if bbox[2] * bbox[3] > 200:
+                return True
+            else:
+                return False
+        # for pedenstrin
+        if cate_id in [4]:
+            if bbox[2] > 5 and (bbox[2]*bbox[3]) > 90:
+                return True
+            else:
+                return False
+        # cone anti_collision_bar water_horse
+        if cate_id in [5, 6, 7]:
+            if bbox[2]*bbox[3] > 100:
+                return True
+            else:
+                return False
+        # for ground lock
+        if cate_id in [8]:
+            if ((bbox[1]+bbox[3])) > filter_height and (bbox[2] * bbox[3]) > 100:
+                return True
+            else:
+                return False
+        # for weel rod,speed_bump
+        if cate_id in [10, 11]:
+            if (bbox[2] > 9) and (bbox[3] > 9):
+                return True
+            else:
+                return False
+        return False
+
     def visual(self, output, img_info, cls_conf=0.35, filter=None, max_pix=15.0):
         ratio = img_info["ratio"]
         img = img_info["raw_img"]
         img_height = img_info['height']
         img_width = img_info['width']
+        model_input_h = 352
+        model_input_w = 608
         if output is None:
             return img, ""
         output = output.cpu()
@@ -212,47 +265,87 @@ class Predictor(object):
 
         cls = output[:, 6]
         scores = output[:, 4] * output[:, 5]
+        filter_flag = [True for _ in range(len(bboxes))]
+        slected_cate_id = [1, 2, 3, 4, 5, 10]
 
         lines = ''
-        if True:
-            for i in range(len(bboxes)):
-                vehicle_id = [1, 2, 9, 11, 12]
-                category_id = int(cls[i] + 1)
-                score = scores[i]
-                if score < cls_conf:
-                    continue
-                ratio_h = img_height / 384
-                ratio_w = img_width / 768
+        # if True:
+        for i in range(len(bboxes)):
+            # vehicle_id = [1, 2, 9, 11, 12]
+            category_id = int(cls[i] + 1)
+            if category_id not in slected_cate_id:
+                continue
 
-                x1 = max(bboxes[i][0], 0)
-                y1 = max(bboxes[i][1], 0)
-                x2 = min(bboxes[i][2], img_width - 1)
-                y2 = min(bboxes[i][3], img_height - 1)
-                w = x2 - x1 + 1
-                h = y2 - y1 + 1
-                down_size = h / ratio_h
-                # if category_id not in vehicle_id and filter_15pixel and (h / ratio_h) < 15.0:
-                #     continue
-                # elif category_id in vehicle_id and filter_15pixel and min(w / ratio_w, h / ratio_h) < 15.0:
-                #     continue
+            score = scores[i]
+            if score < cls_conf:
+                continue
+            # ratio_h = img_height / model_input_h
+            # ratio_w = img_width / model_input_w
 
-                if down_size < max_pix and filter:
-                    continue
-                x1 = bboxes[i][0]
-                y1 = bboxes[i][1]
-                x2 = bboxes[i][2]
-                y2 = bboxes[i][3]
-                lines += "{},{},{},{},{},{},".format(category_id, score, x1, y1, x2, y2)
-                for j in range(4):
-                    if keypoint_cls[i][j] == 1:
-                        lines += "{},{},{}, ".format(
-                            keypoint_reg[i][0 + j*2], keypoint_reg[i][1 + j*2], 1)
-                    else:
-                        lines += "{},{},{},".format(
-                            0, 0, 0, 0, 0)
-                lines += "\n"
+            # ratio_h = 720 / 256.0
+            # ratio_w = 1280 / 512.0
+
+            # resize_ratio_h = 1080.0 / 720.0
+            # resize_ratio_w = 1920.0 / 1280.0
+
+            # x1 = max(bboxes[i][0], 0) / resize_ratio_w
+            # y1 = max(bboxes[i][1], 0) / resize_ratio_h
+            # x2 = min(bboxes[i][2], img_width - 1) / resize_ratio_w
+            # y2 = min(bboxes[i][3], img_height - 1) / resize_ratio_h
+            # box = bboxes[i].copy()
+
+            # model_sacle_bbox[0] = model_sacle_bbox[0] * ratio_w
+            # model_sacle_bbox[2] = model_sacle_bbox[2] * ratio_w
+
+            # model_sacle_bbox[1] = model_sacle_bbox[1] * ratio_h
+            # model_sacle_bbox[3] = model_sacle_bbox[3] * ratio_h
+
+            x1 = max(bboxes[i][0], 0)
+            y1 = max(bboxes[i][1], 0)
+            x2 = min(bboxes[i][2], img_width - 1)
+            y2 = min(bboxes[i][3], img_height - 1)
+
+            w = x2 - x1 + 1
+            h = y2 - y1 + 1
+            box = [x1, y1, w, h]
+            slected_flag = self.whether_slected(
+                box, category_id, (model_input_h, model_input_w), (img_height, img_width))
+            if not slected_flag:
+                continue
+            filter_flag[i] = False
+            # down_size = h / ratio_h
+            # down_size_w = w / ratio_w
+
+            # if (1 == category_id) and down_size < 15:
+            #     continue
+            # elif 10 == category_id and down_size_w < 15:
+            #     continue
+            # elif down_size < 5:
+            #     continue
+            # # if category_id not in vehicle_id and filter_15pixel and (h / ratio_h) < 15.0:
+            # #     continue
+            # # elif category_id in vehicle_id and filter_15pixel and min(w / ratio_w, h / ratio_h) < 15.0:
+            # #     continue
+
+            # # if down_size < max_pix and filter:
+            #     continue
+            x1 = bboxes[i][0]
+            y1 = bboxes[i][1]
+            x2 = bboxes[i][2]
+            y2 = bboxes[i][3]
+            lines += "{},{},{},{},{},{},".format(category_id, score, x1, y1, x2, y2)
+            for j in range(4):
+                if keypoint_cls[i][j] == 1:
+                    lines += "{},{},{}, ".format(
+                        keypoint_reg[i][0 + j*2], keypoint_reg[i][1 + j*2], 1)
+                else:
+                    lines += "{},{},{},".format(
+                        0, 0, 0, 0, 0)
+            lines += "\n"
+        # vis_res = vis(img, bboxes, scores, cls, cls_conf,
+        #               self.cls_names, keypoint_reg, keypoint_cls, ratio_h, max_pix)
         vis_res = vis(img, bboxes, scores, cls, cls_conf,
-                      self.cls_names, keypoint_reg, keypoint_cls, ratio_h, max_pix)
+                      self.cls_names, keypoint_reg, keypoint_cls, filter_flag)
         return vis_res, lines
 
 
@@ -262,10 +355,12 @@ def image_demo(predictor, vis_folder, csv_folder, path, current_time, save_resul
     else:
         files = [path]
     files.sort()
-
+    name_index = 0
     with trange(len(files)) as t:
         for i in t:
             image_name = files[i]
+            if image_name is None:
+                continue
             post_pix = {}
             outputs, img_info = predictor.inference(image_name, post_pix)
             result_image, res_lines = predictor.visual(
@@ -280,6 +375,8 @@ def image_demo(predictor, vis_folder, csv_folder, path, current_time, save_resul
                 save_file_name = os.path.join(save_folder, base_sub_dir)
                 os.makedirs(save_file_name, exist_ok=True)
                 save_file_name = os.path.join(save_file_name, os.path.basename(image_name))
+                # save_file_name = os.path.join(save_file_name, str(name_index)+".jpeg")
+                name_index += 1
                 post_pix["det_res_path"] = save_file_name
                 # logger.info("Saving detection result in {}".format(save_file_name))
                 cv2.imwrite(save_file_name, result_image)

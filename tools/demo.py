@@ -100,7 +100,6 @@ def make_parser():
     return parser
 
 
-
 def get_image_list(path):
     image_names = []
     for maindir, subdir, file_name_list in os.walk(path):
@@ -173,7 +172,7 @@ class Predictor(object):
             outputs = self.model(img)
             if self.decoder is not None:
                 outputs = self.decoder(outputs, dtype=outputs.type())
-            outputs ,kp_det = postprocess(
+            outputs, kp_det = postprocess(
                 outputs, self.num_classes, self.confthre,
                 self.nmsthre, class_agnostic=True
             )
@@ -250,7 +249,7 @@ class Predictor(object):
         vis_res = vis(img, bboxes, scores, cls, cls_conf,
                       self.cls_names, keypoint_reg, keypoint_cls, ratio_h, max_pix)
         return vis_res, lines
-    
+
     def visual_det_kp(self, output, img_info, cls_conf=0.35, filter=None, max_pix=15.0):
         img = img_info["raw_img"]
         ratio = img_info["ratio"]
@@ -298,10 +297,9 @@ class Predictor(object):
                         lines += "{},{},{},".format(
                             0, 0, 0, 0, 0)
                 lines += "\n"
-                
-                
+
         return vis_res, lines
-        
+
 
 def visual_kp_det(img, kp_det, img_info, cls_conf=0.25):
     ratio = img_info["ratio"]
@@ -309,21 +307,22 @@ def visual_kp_det(img, kp_det, img_info, cls_conf=0.25):
     if kp_det is None:
         return img
     kp_det = kp_det.cpu()
-    keypoints= kp_det[:, 0:2]
+    keypoints = kp_det[:, 0:2]
     keypoints /= ratio
     cls = kp_det[:, 4]
     scores = kp_det[:, 2] * kp_det[:, 3]
     kp_cls = kp_det[:, 4].numpy()
     for i in range(len(keypoints)):
-        if scores[i]<cls_conf:
+        if scores[i] < cls_conf:
             continue
         # logger.error(keypoints)
         vis_kp = [int(keypoints[i][0]), int(keypoints[i][1])]
         cv2.circle(img, vis_kp, 3, (0, 255, 15), 1)
         font = cv2.FONT_HERSHEY_SIMPLEX
-        cv2.putText(img, str(int(kp_cls[i] - 9)), (int(keypoints[i][0]) + 5, int(keypoints[i][1]) + 5), font, 0.5,  (0, 255, 15), 2)
+        cv2.putText(img, str(int(kp_cls[i] - 9)), (int(keypoints[i][0]) +
+                    5, int(keypoints[i][1]) + 5), font, 0.5,  (0, 255, 15), 2)
     return img
-        
+
 
 # def image_demo(predictor, vis_folder, path, current_time, save_result):
 #     if os.path.isdir(path):
@@ -340,13 +339,13 @@ def visual_kp_det(img, kp_det, img_info, cls_conf=0.25):
 #             save_img_name = image_name[len(path):len(image_name)]
 #             # save_file_name = os.path.join(save_folder, sub_dir, os.path.basename(image_name))
 #             save_file_name = os.path.join(save_folder, save_img_name)
-#             os.makedirs(os.path.split(save_file_name)[0], exist_ok=True) 
+#             os.makedirs(os.path.split(save_file_name)[0], exist_ok=True)
 #         if outputs[0] is None:
 #             save_img = cv2.imread(image_name)
 #             logger.info("Saving detection result in {}".format(save_file_name))
 #             cv2.imwrite(save_file_name, save_img)
 #             continue
-        
+
 #         match_result = match_keypoints(outputs[0], kp_det[0], 0.25, img_info)
 #         result_image, lines = predictor.visual_det_kp(match_result, img_info, predictor.confthre)
 #         # visual_kp_det(result_image, kp_det[0], img_info, predictor.confthre)
@@ -355,7 +354,7 @@ def visual_kp_det(img, kp_det, img_info, cls_conf=0.25):
 #             cv2.imwrite(save_file_name, result_image)
 #         ch = cv2.waitKey(0)
 #         if ch == 27 or ch == ord("q") or ch == ord("Q"):
-            # break
+    # break
 def image_demo(predictor, vis_folder, csv_folder, path, current_time, save_result, save_as_txt, filter_15pixel):
     if os.path.isdir(path):
         files = get_image_list(path)
@@ -368,8 +367,8 @@ def image_demo(predictor, vis_folder, csv_folder, path, current_time, save_resul
             image_name = files[i]
             post_pix = {}
             outputs, kp_det, img_info = predictor.inference(image_name, post_pix)
-            match_result = match_keypoints(outputs[0], kp_det[0], 0.25, img_info, is_merge=False)
-            
+            match_result = match_keypoints(outputs[0], kp_det[0], 0.25, img_info, is_merge=True)
+
             result_image, res_lines = predictor.visual_det_kp(
                 match_result, img_info, predictor.confthre, filter_15pixel, 15.0)
             base_file_name = image_name[len(path)+1:]
@@ -404,6 +403,7 @@ def image_demo(predictor, vis_folder, csv_folder, path, current_time, save_resul
             ch = cv2.waitKey(0)
             if ch == 27 or ch == ord("q") or ch == ord("Q"):
                 break
+
 
 def imageflow_demo(predictor, vis_folder, current_time, args):
     cap = cv2.VideoCapture(args.path if args.demo == "video" else args.camid)
@@ -491,9 +491,8 @@ def main(exp, args):
         args.device, args.fp16, args.legacy,
     )
     current_time = time.localtime()
-    image_demo(predictor, vis_folder,csv_folder, args.path, current_time, 
-               args.save_result,args.txt, args.filter_15pix)
-
+    image_demo(predictor, vis_folder, csv_folder, args.path, current_time,
+               args.save_result, args.txt, args.filter_15pix)
 
 
 if __name__ == "__main__":

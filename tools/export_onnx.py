@@ -13,6 +13,8 @@ from yolox.exp import get_exp
 from yolox.models.network_blocks import SiLU
 from yolox.utils import replace_module
 
+from yolox.utils import save_checkpoint
+
 
 def make_parser():
     parser = argparse.ArgumentParser("YOLOX onnx deploy")
@@ -74,27 +76,42 @@ def main():
     ckpt = torch.load(ckpt_file, map_location="cpu")
 
     model.eval()
+    print(ckpt.keys())
     if "model" in ckpt:
         ckpt = ckpt["model"]
-    model.load_state_dict(ckpt)
+    model.load_state_dict(ckpt, strict=False)
     model = replace_module(model, nn.SiLU, SiLU)
     model.head.decode_in_inference = False
-
     logger.info("loading checkpoint done.")
     dummy_input = torch.randn(args.batch_size, 3, exp.test_size[0], exp.test_size[1])
+    logger.info("input shape: {}".format(dummy_input.shape))
     logger.info("the model input shape is :{} ".format(dummy_input.shape))
-
+    os.makedirs("onnx_models", exist_ok=True)
+    onnx_output_name = os.path.join('onnx_models', args.output_name)
     torch.onnx._export(
         model,
         dummy_input,
-        args.output_name,
+        onnx_output_name,
         input_names=[args.input],
-        output_names=[args.output],
+        # output_names=['images'],
         dynamic_axes={args.input: {0: 'batch'},
                       args.output: {0: 'batch'}} if args.dynamic else None,
         opset_version=args.opset,
     )
-    logger.info("generated onnx model named {}".format(args.output_name))
+    logger.info("generated onnx model named {}".format(onnx_output_name))
+    logger.info("save pth")
+    ckpt_state = {
+        "start_epoch": 0,
+        "model": model.state_dict(),
+        "optimizer": 5,
+    }
+    save_checkpoint(
+        ckpt_state,
+        True,
+        "onnx_models",
+        "best.pth",
+    )
+    logger.info("save pth done")
 
     if not args.no_onnxsim:
         import onnx
@@ -104,13 +121,15 @@ def main():
         input_shapes = {args.input: list(dummy_input.shape)} if args.dynamic else None
 
         # use onnxsimplify to reduce reduent model.
-        onnx_model = onnx.load(args.output_name)
+        onnx_model = onnx.load(onnx_output_name)
         model_simp, check = simplify(onnx_model,
                                      dynamic_input_shape=args.dynamic,
                                      input_shapes=input_shapes)
         assert check, "Simplified ONNX model could not be validated"
-        onnx.save(model_simp, args.output_name)
-        logger.info("generated simplified onnx model named {}".format(args.output_name))
+        os.makedirs("onnxsim_models", exist_ok=True)
+        onnx.save(model_simp, os.path.join('onnxsim_models', args.output_name))
+        logger.info("generated simplified onnx model named {}".format(
+            os.path.join('onnxsim_models', args.output_name)))
 
 
 if __name__ == "__main__":

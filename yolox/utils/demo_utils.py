@@ -131,8 +131,8 @@ def demo_postprocess(outputs, img_size, p6=False):
     expanded_strides = np.concatenate(expanded_strides, 1)
     outputs[..., :2] = (outputs[..., :2] + grids) * expanded_strides
     outputs[..., 2:4] = np.exp(outputs[..., 2:4]) * expanded_strides
-    for o in outputs[..., bbox_ch:bbox_ch+2][0]:
-        print(o)
+    # for o in outputs[..., bbox_ch:bbox_ch+2][0]:
+    #     print(o)
     outputs[..., bbox_ch:bbox_ch+2] = np.sign(outputs[..., bbox_ch:bbox_ch+2]) * ((np.exp(
         np.abs(outputs[..., bbox_ch:bbox_ch+2])) - 1)) * expanded_strides + outputs[..., :2]
     # print(outputs[..., bbox_ch:bbox_ch+2])

@@ -2,6 +2,7 @@
 # -*- coding:utf-8 -*-
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 
+import numpy as np
 import math
 from loguru import logger
 
@@ -10,9 +11,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from yolox.utils import bboxes_iou
+import cv2
+import matplotlib.pyplot as plt
 
 from .losses import IOUloss
 from .network_blocks import BaseConv, DWConv
+count = 0
 
 
 class YOLOXHead(nn.Module):
@@ -24,6 +28,8 @@ class YOLOXHead(nn.Module):
         in_channels=[256, 512, 1024],
         act="silu",
         depthwise=False,
+        export_tda4=False,
+        bins=16,
     ):
         """
         Args:
@@ -37,6 +43,8 @@ class YOLOXHead(nn.Module):
         self.num_head = 12
         # self.eta = nn.Parameter(torch.ones(self.num_head))
         self.decode_in_inference = True  # for deploy, set to False
+        self.export_tda4 = export_tda4
+        self.bins = bins
 
         self.cls_convs = nn.ModuleList()
         self.reg_convs = nn.ModuleList()
@@ -53,8 +61,16 @@ class YOLOXHead(nn.Module):
         self.keypoint_reg_k2 = nn.ModuleList()
         self.keypoint_reg_k3 = nn.ModuleList()
         self.keypoint_reg_k4 = nn.ModuleList()
+        self.conv_whl = nn.ModuleList()
+        self.conv_pxy = nn.ModuleList()
+        self.conv_ori_offset = nn.ModuleList()
+        self.conv_ori_conf = nn.ModuleList()
         self.stems = nn.ModuleList()
+        # depthwise = False
         Conv = DWConv if depthwise else BaseConv
+        # Conv_out = BaseConv
+        self.tanh = nn.Tanh()
+
         for i in range(len(in_channels)):
             self.stems.append(
                 BaseConv(
@@ -244,6 +260,43 @@ class YOLOXHead(nn.Module):
                     padding=0,
                 )
             )
+            if export_tda4:
+                self.conv_whl.append(
+                    nn.Conv2d(
+                        in_channels=int(256 * width),
+                        out_channels=3,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                    )
+                )
+                self.conv_pxy.append(
+                    nn.Conv2d(
+                        in_channels=int(256 * width),
+                        out_channels=2,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                    )
+                )
+                self.conv_ori_offset.append(
+                    nn.Conv2d(
+                        in_channels=int(256 * width),
+                        out_channels=self.bins * 2,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                    )
+                )
+                self.conv_ori_conf.append(
+                    nn.Conv2d(
+                        in_channels=int(256 * width),
+                        out_channels=self.bins,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                    )
+                )
 
         self.use_l1 = False
         self.l1_loss = nn.L1Loss(reduction="none")
@@ -302,6 +355,26 @@ class YOLOXHead(nn.Module):
             b = conv.bias.view(self.n_anchors, -1)
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+        if self.export_tda4:
+            for conv in self.conv_whl:
+                b = conv.bias.view(self.n_anchors, -1)
+                b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+                conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+            for conv in self.conv_pxy:
+                b = conv.bias.view(self.n_anchors, -1)
+                b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+                conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+            for conv in self.conv_ori_offset:
+                b = conv.bias.view(self.n_anchors, -1)
+                b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+                conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+            for conv in self.conv_ori_conf:
+                b = conv.bias.view(self.n_anchors, -1)
+                b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+                conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
     # def uncertainty_loss(self, losses):
     #     assert len(losses) == len(self.eta)
@@ -310,11 +383,12 @@ class YOLOXHead(nn.Module):
 
     def forward(self, xin, labels=None, imgs=None):
         outputs = []
+        confs = []
+        cls_argmax = []
         origin_preds = []
         x_shifts = []
         y_shifts = []
         expanded_strides = []
-
         for k, (cls_conv, reg_conv, stride_this_level, x) in enumerate(
             zip(self.cls_convs, self.reg_convs, self.strides, xin)
         ):
@@ -323,6 +397,8 @@ class YOLOXHead(nn.Module):
             reg_x = x
             keypoint_cls_x = x
             keypoint_reg_x = x
+            if self.export_tda4:
+                feature_3d = x
 
             cls_feat = cls_conv(cls_x)
             cls_output = self.cls_preds[k](cls_feat)
@@ -342,6 +418,11 @@ class YOLOXHead(nn.Module):
             keypoint_reg_k2_output = self.keypoint_reg_k2[k](keypoint_reg_feat)
             keypoint_reg_k3_output = self.keypoint_reg_k3[k](keypoint_reg_feat)
             keypoint_reg_k4_output = self.keypoint_reg_k4[k](keypoint_reg_feat)
+            if self.export_tda4:
+                conv_whl_output = self.conv_whl[k](feature_3d)
+                conv_pxy_output = self.conv_pxy[k](feature_3d)
+                conv_ori_offset_output = self.conv_ori_offset[k](feature_3d)
+                conv_ori_conf_output = self.conv_ori_conf[k](feature_3d)
 
             # keypoint_reg_k1_output = self.tanh(keypoint_reg_k1_output)
             # keypoint_reg_k2_output = self.tanh(keypoint_reg_k2_output)
@@ -380,20 +461,60 @@ class YOLOXHead(nn.Module):
                     origin_preds.append(reg_output.clone())
 
             else:
-                output = torch.cat(
-                    [reg_output, obj_output.sigmoid(), cls_output.sigmoid(),
-                     keypoint_reg_k1_output,
-                     keypoint_reg_k2_output,
-                     keypoint_reg_k3_output,
-                     keypoint_reg_k4_output,
-                     keypoint_cls_k1_output,
-                     keypoint_cls_k2_output,
-                     keypoint_cls_k3_output,
-                     keypoint_cls_k4_output, ], 1)
+                if self.export_tda4:
+                    output = torch.cat(
+                        [reg_output, obj_output, cls_output,
+                         keypoint_reg_k1_output,
+                         keypoint_reg_k2_output,
+                         keypoint_reg_k3_output,
+                         keypoint_reg_k4_output,
+                         keypoint_cls_k1_output,
+                         keypoint_cls_k2_output,
+                         keypoint_cls_k3_output,
+                         keypoint_cls_k4_output,
+                         conv_whl_output,
+                         conv_pxy_output,
+                         conv_ori_offset_output, ], 1)
+                    confs.append(conv_ori_conf_output)
+                    cls_argmax.append(torch.argmax(cls_output, 1))
+                else:
+                    output = torch.cat(
+                        [reg_output, obj_output.sigmoid(), cls_output.sigmoid(),
+                         keypoint_reg_k1_output,
+                         keypoint_reg_k2_output,
+                         keypoint_reg_k3_output,
+                         keypoint_reg_k4_output,
+                         keypoint_cls_k1_output,
+                         keypoint_cls_k2_output,
+                         keypoint_cls_k3_output,
+                         keypoint_cls_k4_output, ], 1)
 
             outputs.append(output)
-
         if self.training:
+            # nlabel = (labels.sum(dim=2) > 0).sum(dim=1)
+            # for i in range(imgs.shape[0]):
+            #     num_gt = int(nlabel[i])
+            #     show_bbox = labels[i, :num_gt, 1:5].cpu().numpy()
+            #     #     show_kps = lables_show[i, :num_gt, 5:17].cpu().numpy()
+            #     show_img = imgs[i].cpu().numpy().transpose(
+            #         1, 2, 0).astype(np.uint8)
+            #     show_img = np.ascontiguousarray(show_img)
+            #     for j in range(num_gt):
+            #         print(show_bbox[j])
+            #         x1 = int(show_bbox[j][0] - show_bbox[j][2] / 2)
+            #         y1 = int(show_bbox[j][1] - show_bbox[j][3] / 2)
+
+            #         x2 = int(show_bbox[j][0] + show_bbox[j][2] / 2)
+            #         y2 = int(show_bbox[j][1] + show_bbox[j][3] / 2)
+            #         print(x1, y1, x2, y2, show_img.shape)
+            #         cv2.rectangle(show_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            #         # break
+            #     global count
+            #     cv2.imwrite(str(count)+'.jpg', show_img)
+            #     count += 1
+            # cv2.imshow('.jpg', show_img)
+            # cv2.waitKey(0)
+
             return self.get_losses(
                 imgs,
                 x_shifts,
@@ -405,6 +526,8 @@ class YOLOXHead(nn.Module):
                 dtype=xin[0].dtype,
             )
         else:
+            if self.export_tda4:
+                return outputs, confs, cls_argmax
             self.hw = [x.shape[-2:] for x in outputs]
             # [batch, n_anchors_all, 85]
             outputs = torch.cat(
@@ -412,7 +535,7 @@ class YOLOXHead(nn.Module):
             ).permute(0, 2, 1)
 
             if self.decode_in_inference:
-                logger.info("yolox head using self.decode_in_inference")
+                # logger.info("yolox head using self.decode_in_inference")
                 return self.decode_outputs(outputs, dtype=xin[0].type())
             else:
                 # logger.info(
@@ -490,6 +613,7 @@ class YOLOXHead(nn.Module):
         keypoint_cls_pres_k3 = keypoint_cls_pres[:, :, 4:6]
         keypoint_cls_pres_k4 = keypoint_cls_pres[:, :, 6:8]
 
+        lables_show = labels.clone()
         # calculate targets
         nlabel = (labels.sum(dim=2) > 0).sum(dim=1)  # number of objects
 
@@ -583,13 +707,15 @@ class YOLOXHead(nn.Module):
                         labels,
                         imgs,
                     )
-                except RuntimeError:
+                except RuntimeError as e:
+                    if "CUDA out of memory. " not in str(e):
+                        logger.error("RuntimeError might not caused by CUDA OOM")
+                        raise  # RuntimeError might not caused by CUDA OOM
                     logger.error(
                         "OOM RuntimeError is raised due to the huge memory cost during label assignment. \
                            CPU mode is applied in this batch. If you want to avoid this issue, \
                            try to reduce the batch size or image size."
                     )
-                    assert True == False
                     torch.cuda.empty_cache()
                     (
                         gt_matched_classes,
@@ -796,21 +922,30 @@ class YOLOXHead(nn.Module):
 
         loss_peypoint_reg_k1 = (
             self.l1_loss(keypoint_reg_preds_k1.view(-1, 2)[fg_masks][keypoint_vis_flat1],
-                         keypoint_reg_k1_targets[keypoint_vis_flat1])).sum() / keypoint_vis_flat1.sum()
+                         keypoint_reg_k1_targets[keypoint_vis_flat1])).sum() / max(keypoint_vis_flat1.sum(), 1)
         loss_peypoint_reg_k2 = (
             self.l1_loss(keypoint_reg_preds_k2.view(-1, 2)[fg_masks][keypoint_vis_flat2],
-                         keypoint_reg_k2_targets[keypoint_vis_flat2])).sum() / keypoint_vis_flat2.sum()
+                         keypoint_reg_k2_targets[keypoint_vis_flat2])).sum() / max(keypoint_vis_flat2.sum(), 1)
         loss_peypoint_reg_k3 = (
             self.l1_loss(keypoint_reg_preds_k3.view(-1, 2)[fg_masks][keypoint_vis_flat3],
-                         keypoint_reg_k3_targets[keypoint_vis_flat3])).sum() / keypoint_vis_flat3.sum()
+                         keypoint_reg_k3_targets[keypoint_vis_flat3])).sum() / max(keypoint_vis_flat3.sum(), 1)
+
+        # if keypoint_vis_flat3.sum() == 0:
+        # batch_num = imgs.cpu().numpy().shape[0]
+
         loss_peypoint_reg_k4 = (
             self.l1_loss(keypoint_reg_preds_k4.view(-1, 2)[fg_masks][keypoint_vis_flat4],
-                         keypoint_reg_k4_targets[keypoint_vis_flat4])).sum() / keypoint_vis_flat4.sum()
+                         keypoint_reg_k4_targets[keypoint_vis_flat4])).sum() / max(keypoint_vis_flat4.sum(), 1)
 
         if self.use_l1:
             loss_l1 = (
                 self.l1_loss(origin_preds.view(-1, 4)[fg_masks], l1_targets)
             ).sum() / num_fg
+
+            if torch.isinf(loss_l1) or torch.isnan(loss_l1):
+                logger.warning("l1 loss inf or nan: target: {}\n pred: {}".format(
+                    l1_targets, origin_preds.view(-1, 4)[fg_masks]))
+                loss_l1 = 0.0
             key_reg_weight = 5.0
 
         else:
@@ -822,10 +957,11 @@ class YOLOXHead(nn.Module):
             # loss_peypoint_reg_k3 = 0.0
             # loss_peypoint_reg_k4 = 0.0
 
-        reg_weight = 5.0
+        reg_weight = 3.0
         key_cls_weight = 3.0
         obj_weight = 2.0
-        loss = reg_weight * loss_iou + obj_weight * loss_obj + loss_cls + loss_l1 \
+        l1_weight = 3.0
+        loss = reg_weight * loss_iou + obj_weight * loss_obj + loss_cls + l1_weight*loss_l1 \
             + key_cls_weight * (loss_keypoint_cls_k1 + loss_keypoint_cls_k2 +
                                 loss_keypoint_cls_k3 + loss_keypoint_cls_k4)  \
             + key_reg_weight*(loss_peypoint_reg_k1 + loss_peypoint_reg_k2 +
@@ -919,7 +1055,8 @@ class YOLOXHead(nn.Module):
             gt_bboxes_per_image = gt_bboxes_per_image.cpu()
             bboxes_preds_per_image = bboxes_preds_per_image.cpu()
 
-        pair_wise_ious = bboxes_iou(gt_bboxes_per_image, bboxes_preds_per_image, False)
+        # pair_wise_ious = bboxes_iou(gt_bboxes_per_image, bboxes_preds_per_image, False)
+        # logger.info(pair_wise_ious)
 
         gt_cls_per_image = (
             F.one_hot(gt_classes.to(torch.int64), self.num_classes)
@@ -927,8 +1064,8 @@ class YOLOXHead(nn.Module):
             .unsqueeze(1)
             .repeat(1, num_in_boxes_anchor, 1)
         )
-        pair_wise_ious_loss = -torch.log(pair_wise_ious + 1e-8)
-
+        # pair_wise_ious_loss = -torch.log(pair_wise_ious + 1e-8)
+        # logger.info(pair_wise_ious)
         if mode == "cpu":
             cls_preds_, obj_preds_ = cls_preds_.cpu(), obj_preds_.cpu()
 
@@ -941,13 +1078,16 @@ class YOLOXHead(nn.Module):
                 cls_preds_.sqrt_(), gt_cls_per_image, reduction="none"
             ).sum(-1)
         del cls_preds_
-
+        pair_wise_ious = bboxes_iou(gt_bboxes_per_image, bboxes_preds_per_image, False)
+        # logger.info(pair_wise_ious)
+        pair_wise_ious_loss = -torch.log(pair_wise_ious + 1e-8)
+        # logger.info(pair_wise_ious)
         cost = (
             pair_wise_cls_loss
             + 3.0 * pair_wise_ious_loss
             + 100000.0 * (~is_in_boxes_and_center)
         )
-
+        # logger.info(pair_wise_ious)
         (
             num_fg,
             gt_matched_classes,
@@ -1059,11 +1199,13 @@ class YOLOXHead(nn.Module):
         # Dynamic K
         # ---------------------------------------------------------------
         matching_matrix = torch.zeros_like(cost, dtype=torch.uint8)
-
+        # logger.info(pair_wise_ious)
         ious_in_boxes_matrix = pair_wise_ious
         n_candidate_k = min(10, ious_in_boxes_matrix.size(1))
         topk_ious, _ = torch.topk(ious_in_boxes_matrix, n_candidate_k, dim=1)
+        # logger.info(topk_ious)
         dynamic_ks = torch.clamp(topk_ious.sum(1).int(), min=1)
+        # logger.info(dynamic_ks)
         dynamic_ks = dynamic_ks.tolist()
         for gt_idx in range(num_gt):
             _, pos_idx = torch.topk(
