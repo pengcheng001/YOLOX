@@ -32,7 +32,91 @@ def filter_box(output, scale_range):
     return output[keep]
 
 
-def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False):
+def filter_bbox_for_val(target):
+    '''
+        this is hard code, it will filter some bbox for you design
+        不搞减速带了，不搞挡轮杆了，所以类别少了两类，一共9类，最后加4个车辆点的bbox，就是
+        13个类别。其实原来挡轮杆和减速带的类别id是10（9），11（10）
+        '''
+    filter_on = False
+    if filter_on:
+        gt = target
+        remain_ann = []
+        # for vehicles,
+        vehicle_flag = gt[:, 0] == 0
+        vehicles_gt = gt[vehicle_flag]
+        vehicles_area_flag = (vehicles_gt[:, 3]*vehicles_gt[:, 4]) > 400
+        vehicles_filtered = vehicles_gt[(vehicles_area_flag)]
+        remain_ann.append(vehicles_filtered)
+
+        tricycle_flag = gt[:, 0] == 1
+        tricycle_gt = gt[tricycle_flag]
+        tricycle_area_flag = (tricycle_gt[:, 3]*tricycle_gt[:, 4]) > 300
+        tricycle_filtered = tricycle_gt[tricycle_area_flag]
+        remain_ann.append(tricycle_filtered)
+
+        cycle_flag = gt[:, 0] == 2
+        cycle_gt = gt[cycle_flag]
+        cycle_area_flag = (cycle_gt[:, 3]*cycle_gt[:, 4]) > 200
+        cycle_filtered = cycle_gt[cycle_area_flag]
+        remain_ann.append(cycle_filtered)
+
+        barrier_gate_flag = gt[:, 0] == 8
+        barrier_gate_gt = gt[barrier_gate_flag]
+        barrier_gate_area_flag = (barrier_gate_gt[:, 3]*barrier_gate_gt[:, 4]) > 300
+        barrier_gate_filtered = barrier_gate_gt[barrier_gate_area_flag]
+        remain_ann.append(barrier_gate_filtered)
+
+        # for pedenstrin
+        pedenstrain_gt_flag = gt[:, 0] == 3
+        pedenstrain_gt = gt[pedenstrain_gt_flag]
+        pedenstrain_filter_width_flag = (pedenstrain_gt[:, 3] > 15)
+        pedenstrain_filter_area_flag = (pedenstrain_gt[:, 3] * pedenstrain_gt[:, 4]) > 200
+        pedenstrain_gt_filter_flag = pedenstrain_filter_width_flag & pedenstrain_filter_area_flag
+        pedenstrain_filtered = pedenstrain_gt[pedenstrain_gt_filter_flag]
+        remain_ann.append(pedenstrain_filtered)
+
+        # cone anti_collision_bar water_horse
+        cone_gt_flag = gt[:, 0] == 4
+        cone_gt = gt[cone_gt_flag]
+        cone_area_flag = (cone_gt[:, 3]*cone_gt[:, 4]) > 100
+        cone_filtered = cone_gt[cone_area_flag]
+        remain_ann.append(cone_filtered)
+
+        anti_collision_bar_gt_flag = gt[:, 0] == 6
+        anti_collison_bar_gt = gt[anti_collision_bar_gt_flag]
+        anti_collision_bar_area_flag = (
+            anti_collison_bar_gt[:, 3]*anti_collison_bar_gt[:, 4]) > 352
+        anti_collision_bar_filtered = anti_collison_bar_gt[anti_collision_bar_area_flag]
+        remain_ann.append(anti_collision_bar_filtered)
+
+        water_horse = gt[:, 0] == 5
+        water_horse_gt = gt[water_horse]
+        water_horse_area_flag = (water_horse_gt[:, 3]*water_horse_gt[:, 4]) > 300
+        water_horse_filtered = water_horse_gt[water_horse_area_flag]
+        remain_ann.append(water_horse_filtered)
+
+        # for ground lock
+        ground_lock_flag = (gt[:, 0] == 7)
+        ground_lock_gt = gt[ground_lock_flag]
+        ground_lock_area_flag = (ground_lock_gt[:, 3]*ground_lock_gt[:, 4]) > 200
+        ground_lock_filtered = ground_lock_gt[ground_lock_area_flag]
+        remain_ann.append(ground_lock_filtered)
+
+        # for kp as det
+        for kp_ind in range(9, 13):
+            kp_as_det = (gt[:, 0] == kp_ind)
+            kp_as_det_gt = gt[kp_as_det]
+            kp_as_det_area_flag = (kp_as_det_gt[:, 3]*kp_as_det_gt[:, 4]) > 25.0
+            kp_as_det_filtered = kp_as_det_gt[kp_as_det_area_flag]
+            remain_ann.append(kp_as_det_filtered)
+        new_target = torch.cat(remain_ann, 0)
+        return new_target
+    else:
+        return target
+
+
+def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False, filter_bbox=False):
     box_corner = prediction.new(prediction.shape)
     box_corner[:, :, 0] = prediction[:, :, 0] - prediction[:, :, 2] / 2
     box_corner[:, :, 1] = prediction[:, :, 1] - prediction[:, :, 3] / 2
@@ -82,6 +166,7 @@ def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agn
             )
 
         detections = detections[nms_out_index]
+        # detections = filter_bbox_for_val(detections)
         if output[i] is None:
             output[i] = detections
         else:
@@ -121,7 +206,7 @@ def format_keypoints(bboxes_kp_, conf):
     slected_bbox_flag = (scores > conf)
 
 
-def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=900, is_merge=True):
+def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=200, is_merge=True):
     # bboxes_kp ordered as (x1, y1, x2, y2, obj_conf, class_pred, k1_reg, k2_reg, k3_reg, k4_reg, k1_vis, k2_vis, k3_vis, k4_vis)
     # det_kp ordered as (x, y, obj_conf, class_conf, class_pred)
     if bboxes_kp_ is None:
@@ -131,6 +216,7 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=900, is
     ratio = img_info['ratio']
     bboxes = bboxes_kp[:, 0:4]
     keypoint_reg = bboxes_kp[:, 7:15]
+
     keypoint_cls = bboxes_kp[:, 15:19]
     categroy = bboxes_kp[:, 6]
     # bboxes /= ratio
@@ -261,7 +347,7 @@ def match_keypoints(bboxes_kp_, det_kp_, conf, img_info, min_matched_dis=900, is
     return slected_bbox_kp
 
 
-def postprocess_kp_det(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False,  kp_det_cls=[11, 12, 13, 14]):
+def postprocess_kp_det(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False,  kp_det_cls=[9, 10, 11, 12]):
     box_corner = prediction.new(prediction.shape)
     box_corner[:, :, 0] = prediction[:, :, 0] - prediction[:, :, 2] / 2
     box_corner[:, :, 1] = prediction[:, :, 1] - prediction[:, :, 3] / 2

@@ -273,17 +273,17 @@ class Predictor(object):
                 score = scores[i]
                 if score < cls_conf:
                     continue
-                ratio_h = img_height / 384
-                ratio_w = img_width / 768
-                x1 = max(bboxes[i][0], 0)
-                y1 = max(bboxes[i][1], 0)
-                x2 = min(bboxes[i][2], img_width - 1)
-                y2 = min(bboxes[i][3], img_height - 1)
-                w = x2 - x1 + 1
-                h = y2 - y1 + 1
-                down_size = h / ratio_h
-                if down_size < max_pix and filter:
-                    continue
+                # ratio_h = img_height / 384
+                # ratio_w = img_width / 768
+                # x1 = max(bboxes[i][0], 0)
+                # y1 = max(bboxes[i][1], 0)
+                # x2 = min(bboxes[i][2], img_width - 1)
+                # y2 = min(bboxes[i][3], img_height - 1)
+                # w = x2 - x1 + 1
+                # h = y2 - y1 + 1
+                # down_size = h / ratio_h
+                # if down_size < max_pix and filter:
+                #     continue
                 x1 = bboxes[i][0]
                 y1 = bboxes[i][1]
                 x2 = bboxes[i][2]

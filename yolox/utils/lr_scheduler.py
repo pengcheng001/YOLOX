@@ -137,12 +137,20 @@ def yolox_warm_cos_lr(
     # elif iters >= total_iters - no_aug_iter:
     #     lr = min_lr
     else:
+        # lr = min_lr + 0.5 * (lr - min_lr) * (
+        #     1.0
+        #     + math.cos(
+        #         math.pi
+        #         * (iters - warmup_total_iters)
+        #         / (total_iters - warmup_total_iters - no_aug_iter)
+        #     )
+        # )
         lr = min_lr + 0.5 * (lr - min_lr) * (
             1.0
             + math.cos(
                 math.pi
                 * (iters - warmup_total_iters)
-                / (total_iters - warmup_total_iters - no_aug_iter)
+                / (total_iters - warmup_total_iters)
             )
         )
     return lr

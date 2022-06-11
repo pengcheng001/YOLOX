@@ -29,8 +29,8 @@ class COCODataset(Dataset):
         cache=False,
         filter_bbox=False,
         min_input_h=15,
-        class_num=11,
-        filter=False,
+        class_num=9,
+        is_val=False,
     ):
         """
         COCO dataset initialization. Annotation data are read into memory by COCO API.
@@ -47,14 +47,19 @@ class COCODataset(Dataset):
             # data_dir = os.path.join(get_yolox_datadir())
         self.data_dir = data_dir
         self.json_file = json_file
-        self.filter=filter
+        self.is_val = is_val
 
         logger.info(os.path.join(self.data_dir, "annotations", self.json_file))
         self.coco = COCO(os.path.join(self.data_dir, "annotations", self.json_file))
 
         self.ids = self.coco.getImgIds()
         self.class_ids = sorted(self.coco.getCatIds())
-        cats = self.coco.loadCats(self.coco.getCatIds())
+        self.class_ids = self.class_ids[0:class_num]
+        cats = self.coco.loadCats(self.class_ids)
+        # for kp det
+        for i in range(class_num, class_num+4):
+            self.class_ids.append(i+1)
+            cats.append({"id": i+1, 'name': "kp_det_{}".format(i - class_num)})
         self._classes = tuple([c["name"] for c in cats])
         self.imgs = None
         self.name = name
@@ -126,6 +131,85 @@ class COCODataset(Dataset):
             mode="r+",
         )
 
+    def filter_bbox_for_val(self, target):
+        filter_on = True
+        if filter_on:
+            gt = target
+            remain_ann = []
+            # for vehicles,
+            vehicle_flag = gt[:, 0] == 0
+            vehicles_gt = gt[vehicle_flag]
+            vehicles_area_flag = (vehicles_gt[:, 3]*vehicles_gt[:, 4]) > 400
+            vehicles_filtered = vehicles_gt[(vehicles_area_flag)]
+            remain_ann.append(vehicles_filtered)
+
+            tricycle_flag = gt[:, 0] == 1
+            tricycle_gt = gt[tricycle_flag]
+            tricycle_area_flag = (tricycle_gt[:, 3]*tricycle_gt[:, 4]) > 300
+            tricycle_filtered = tricycle_gt[tricycle_area_flag]
+            remain_ann.append(tricycle_filtered)
+
+            cycle_flag = gt[:, 0] == 2
+            cycle_gt = gt[cycle_flag]
+            cycle_area_flag = (cycle_gt[:, 3]*cycle_gt[:, 4]) > 200
+            cycle_filtered = cycle_gt[cycle_area_flag]
+            remain_ann.append(cycle_filtered)
+
+            barrier_gate_flag = gt[:, 0] == 8
+            barrier_gate_gt = gt[barrier_gate_flag]
+            barrier_gate_area_flag = (barrier_gate_gt[:, 3]*barrier_gate_gt[:, 4]) > 300
+            barrier_gate_filtered = barrier_gate_gt[barrier_gate_area_flag]
+            remain_ann.append(barrier_gate_filtered)
+
+            # for pedenstrin
+            pedenstrain_gt_flag = gt[:, 0] == 3
+            pedenstrain_gt = gt[pedenstrain_gt_flag]
+            pedenstrain_filter_width_flag = (pedenstrain_gt[:, 3] > 15)
+            pedenstrain_filter_area_flag = (pedenstrain_gt[:, 3] * pedenstrain_gt[:, 4]) > 200
+            pedenstrain_gt_filter_flag = pedenstrain_filter_width_flag & pedenstrain_filter_area_flag
+            pedenstrain_filtered = pedenstrain_gt[pedenstrain_gt_filter_flag]
+            remain_ann.append(pedenstrain_filtered)
+
+            # cone anti_collision_bar water_horse
+            cone_gt_flag = gt[:, 0] == 4
+            cone_gt = gt[cone_gt_flag]
+            cone_area_flag = (cone_gt[:, 3]*cone_gt[:, 4]) > 100
+            cone_filtered = cone_gt[cone_area_flag]
+            remain_ann.append(cone_filtered)
+
+            anti_collision_bar_gt_flag = gt[:, 0] == 6
+            anti_collison_bar_gt = gt[anti_collision_bar_gt_flag]
+            anti_collision_bar_area_flag = (
+                anti_collison_bar_gt[:, 3]*anti_collison_bar_gt[:, 4]) > 352
+            anti_collision_bar_filtered = anti_collison_bar_gt[anti_collision_bar_area_flag]
+            remain_ann.append(anti_collision_bar_filtered)
+
+            water_horse = gt[:, 0] == 5
+            water_horse_gt = gt[water_horse]
+            water_horse_area_flag = (water_horse_gt[:, 3]*water_horse_gt[:, 4]) > 300
+            water_horse_filtered = water_horse_gt[water_horse_area_flag]
+            remain_ann.append(water_horse_filtered)
+
+            # for ground lock
+            ground_lock_flag = (gt[:, 0] == 7)
+            ground_lock_gt = gt[ground_lock_flag]
+            ground_lock_area_flag = (ground_lock_gt[:, 3]*ground_lock_gt[:, 4]) > 200
+            ground_lock_filtered = ground_lock_gt[ground_lock_area_flag]
+            remain_ann.append(ground_lock_filtered)
+
+            # for kp as det
+            for kp_ind in range(9, 13):
+                kp_as_det = (gt[:, 0] == kp_ind)
+                kp_as_det_gt = gt[kp_as_det]
+                kp_as_det_area_flag = (kp_as_det_gt[:, 3]*kp_as_det_gt[:, 4]) > 25.0
+                kp_as_det_filtered = kp_as_det_gt[kp_as_det_area_flag]
+                remain_ann.append(kp_as_det_filtered)
+
+            new_target = np.concatenate(remain_ann, 0)
+            return new_target
+        else:
+            return target
+
     def load_anno_from_ids(self, id_):
         im_ann = self.coco.loadImgs(id_)[0]
         width = im_ann["width"]
@@ -144,31 +228,6 @@ class COCODataset(Dataset):
             h = np.max((0, obj["bbox"][3]))
             if obj["category_id"] > self.class_num:
                 continue
-            if self.filter_bbox:
-                bbox_h = y2 - y1 + 1
-                bbox_w = x2 - x1 + 1
-                input_h = self.img_size[0]
-                input_w = self.img_size[1]
-                h_size = bbox_h*(input_h/height)
-                w_size = bbox_w*(input_w/width)
-                if max(h_size, w_size) <= self.min_input_h:
-                    continue
-            if self.filter:
-                filter_height = self.img_size[0] / 3
-                cls = self.class_ids.index(obj["category_id"])
-                bbox_filter = [x1*r, y1*r, w*r, h*r]
-                if cls == 0 or cls == 1 or cls == 2 or cls == 8:
-                    if (bbox_filter[2] * bbox_filter[3]) <= 650:
-                        continue
-                if cls == 3 and bbox_filter[2] <= 15 and (bbox_filter[2] * bbox_filter[3]) <= 300:
-                    continue
-                if (cls == 4 or cls == 6 or cls == 5) and (bbox_filter[2] * bbox_filter[3]) <= 200:
-                    continue
-                # and ((bbox_filter[1] + bbox_filter[3]) <= filter_height):
-                if (cls == 7) and ((bbox_filter[2] * bbox_filter[3]) > 200):
-                    continue
-                if (cls == 9 or cls == 10) and ((bbox_filter[3] <= 9) or bbox_filter[2] <= 9):
-                    continue
             if obj["area"] > 0 and x2 >= x1 and y2 >= y1:
                 bbox_h = y2 - y1 + 1
                 bbox_w = x2 - x1 + 1
@@ -213,7 +272,6 @@ class COCODataset(Dataset):
 
         res = np.zeros((num_objs, 17))
 
-        
         for ix, obj in enumerate(objs):
             cls = self.class_ids.index(obj["category_id"])
             res[ix, 0: 4] = obj["clean_bbox"]
@@ -221,7 +279,6 @@ class COCODataset(Dataset):
             for ik in range(4):
                 res[ix, ik*3+5: ik*3+8] = obj["keypoints"][ik]
                 res[ix, ik*3+5: ik*3+7] *= r
-
         for kp_det_ind in range(len(objs), num_objs):
             kp_det = ann_kp_ad_dets[kp_det_ind - len(objs)]
             res[kp_det_ind, : 5] = kp_det
@@ -230,13 +287,13 @@ class COCODataset(Dataset):
         res[:, : 4] *= r
         img_info = (height, width)
         resized_info = (int(height * r), int(width * r))
-
+        # if self.is_val:
+        #     res = self.filter_bbox_for_val(res)
         file_name = (
             im_ann["file_name"]
             if "file_name" in im_ann
             else "{:012}".format(id_) + ".jpeg"
         )
-
         return (res, img_info, resized_info, file_name)
 
     def load_anno(self, index):

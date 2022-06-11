@@ -10,6 +10,7 @@ import torch.distributed as dist
 import torch.nn as nn
 
 from .base_exp import BaseExp
+import cv2
 
 
 class Exp(BaseExp):
@@ -17,7 +18,7 @@ class Exp(BaseExp):
         super().__init__()
 
         # ---------------- model config ---------------- #
-        self.num_classes = 11+4
+        self.num_classes = 9+4
         self.depth = 1.00
         self.width = 1.00
         self.act = 'relu'
@@ -25,7 +26,7 @@ class Exp(BaseExp):
 
         # ---------------- dataloader config ---------------- #
         # set worker to 4 for shorter dataloader init time
-        self.data_num_workers = 64
+        self.data_num_workers = 4
         self.input_size = (352, 608)  # (height, width)
 
         # Actual multiscale ranges: [640-5*32, 640+5*32].
@@ -35,8 +36,8 @@ class Exp(BaseExp):
         # You can uncomment this line to specify a multiscale range
         # self.random_size = (14, 26)
         self.data_dir = None
-        self.train_ann = "train.json"
-        self.val_ann = "val.json"
+        self.train_ann = "remain_category_train.json"
+        self.val_ann = "remain_category_train.json"
 
         # --------------- transform config ----------------- #
         self.mosaic_prob = 1.0
@@ -52,11 +53,11 @@ class Exp(BaseExp):
 
         # --------------  training config --------------------- #
         self.warmup_epochs = 5
-        self.max_epoch = 300
+        self.max_epoch = 200
         self.warmup_lr = 0
-        self.basic_lr_per_img = 0.001 / 256.0
+        self.basic_lr_per_img = 0.01 / 256.0
         self.scheduler = "yoloxwarmcos"
-        self.no_aug_epochs = 230
+        self.no_aug_epochs = 80
         self.min_lr_ratio = 0.005
         self.ema = True
 
@@ -202,11 +203,13 @@ class Exp(BaseExp):
         return inputs, targets
 
     def filter_bbox(self, input, target):
-
+        '''
+        this is hard code, it will filter some bbox for you design
+        不搞减速带了，不搞挡轮杆了，所以类别少了两类，一共9类，最后加4个车辆点的bbox，就是
+        13个类别。其实原来挡轮杆和减速带的类别id是10（9），11（10）
+        '''
         filter_on = True
         if filter_on:
-            input_height = input.shape[2]
-            filter_height = input_height / 3
             batch_size = target.shape[0]
             new_target = target.new_zeros(target.shape)
             nlabel = (target.sum(dim=2) > 0).sum(dim=1)
@@ -215,70 +218,77 @@ class Exp(BaseExp):
                 if gt_num == 0:
                     continue
                 gt = target[batch, :gt_num, :]
-                # for vehicles
+                remain_ann = []
+                # for vehicles,
                 vehicle_flag = gt[:, 0] == 0
-                tricycle_flag = gt[:, 0] == 1
-                cycle_flag = gt[:, 0] == 2
-                barrier_gate_falg = gt[:, 0] == 8
-                vehicles_flag = (vehicle_flag + tricycle_flag + cycle_flag + barrier_gate_falg)
-                vehicles_gt = gt[vehicles_flag]
-                # if 0 == vehicles_gt.shape[0]:
-                #     vehicles_filtered = vehicles_gt
-                # else:
-                vehicles_area_flag = (vehicles_gt[:, 3]*vehicles_gt[:, 4]) > 650
-                # width_height_ratio = (vehicles_gt[:, 3]/vehicles_gt[:, 4]) > 10
-                # vehicles_filtered = vehicles_gt[(vehicles_area_flag & width_height_ratio)]
+                vehicles_gt = gt[vehicle_flag]
+                vehicles_area_flag = (vehicles_gt[:, 3]*vehicles_gt[:, 4]) > 255
                 vehicles_filtered = vehicles_gt[(vehicles_area_flag)]
+                remain_ann.append(vehicles_filtered)
+
+                tricycle_flag = gt[:, 0] == 1
+                tricycle_gt = gt[tricycle_flag]
+                tricycle_area_flag = (tricycle_gt[:, 3]*tricycle_gt[:, 4]) > 64
+                tricycle_filtered = tricycle_gt[tricycle_area_flag]
+                remain_ann.append(tricycle_filtered)
+
+                cycle_flag = gt[:, 0] == 2
+                cycle_gt = gt[cycle_flag]
+                cycle_area_flag = (cycle_gt[:, 3]*cycle_gt[:, 4]) > 50
+                cycle_filtered = cycle_gt[cycle_area_flag]
+                remain_ann.append(cycle_filtered)
+
+                barrier_gate_flag = gt[:, 0] == 8
+                barrier_gate_gt = gt[barrier_gate_flag]
+                barrier_gate_area_flag = (barrier_gate_gt[:, 3]*barrier_gate_gt[:, 4]) > 50
+                barrier_gate_filtered = barrier_gate_gt[barrier_gate_area_flag]
+                remain_ann.append(barrier_gate_filtered)
 
                 # for pedenstrin
                 pedenstrain_gt_flag = gt[:, 0] == 3
                 pedenstrain_gt = gt[pedenstrain_gt_flag]
-                # if pedenstrain_gt.shape[0] == 0:
-                #     pedenstrain_filter_gt = pedenstrain_gt
-                # else:
-                pedenstrain_filter_width_flag = (pedenstrain_gt[:, 3] > 15)
-                # pedenstrain_filter_area_flag = (pedenstrain_gt[:, 3] * pedenstrain_gt[:, 4]) > 70
-                pedenstrain_filter_area_flag = (pedenstrain_gt[:, 3] * pedenstrain_gt[:, 4]) > 300
+                pedenstrain_filter_width_flag = (pedenstrain_gt[:, 3] > 5)
+                pedenstrain_filter_area_flag = (pedenstrain_gt[:, 3] * pedenstrain_gt[:, 4]) > 50
                 pedenstrain_gt_filter_flag = pedenstrain_filter_width_flag & pedenstrain_filter_area_flag
-                pedenstrain_filter_gt = pedenstrain_gt[pedenstrain_gt_filter_flag]
+                pedenstrain_filtered = pedenstrain_gt[pedenstrain_gt_filter_flag]
+                remain_ann.append(pedenstrain_filtered)
 
                 # cone anti_collision_bar water_horse
                 cone_gt_flag = gt[:, 0] == 4
+                cone_gt = gt[cone_gt_flag]
+                cone_area_flag = (cone_gt[:, 3]*cone_gt[:, 4]) > 36
+                cone_filtered = cone_gt[cone_area_flag]
+                remain_ann.append(cone_filtered)
+
                 anti_collision_bar_gt_flag = gt[:, 0] == 6
+                anti_collison_bar_gt = gt[anti_collision_bar_gt_flag]
+                anti_collision_bar_area_flag = (
+                    anti_collison_bar_gt[:, 3]*anti_collison_bar_gt[:, 4]) > 36
+                anti_collision_bar_filtered = anti_collison_bar_gt[anti_collision_bar_area_flag]
+                remain_ann.append(anti_collision_bar_filtered)
+
                 water_horse = gt[:, 0] == 5
-                cones_flag = (cone_gt_flag + anti_collision_bar_gt_flag + water_horse)
-                cones_gt = gt[cones_flag]
-                # if 0 == cones_gt.shape[0]:
-                #     cones_filter_gt = cones_gt
-                # else:
-                # cones_area_flag = ((cones_gt[:, 3] * cones_gt[:, 4]) > 50)
-                cones_area_flag = ((cones_gt[:, 3] * cones_gt[:, 4]) > 200)
-                cones_filter_gt = cones_gt[cones_area_flag]
+                water_horse_gt = gt[water_horse]
+                water_horse_area_flag = (water_horse_gt[:, 3]*water_horse_gt[:, 4]) > 49
+                water_horse_filtered = water_horse_gt[water_horse_area_flag]
+                remain_ann.append(water_horse_filtered)
 
                 # for ground lock
                 ground_lock_flag = (gt[:, 0] == 7)
                 ground_lock_gt = gt[ground_lock_flag]
-                # if 0 == cones_gt.shape[0]:
-                #     ground_lock_filter_gt = ground_lock_gt
-                # else:
-                ground_lock_bottom_flag = (
-                    (ground_lock_gt[:, 2] + (ground_lock_gt[:, 4]/2)) > filter_height)
-                ground_lock_area_flag = ((ground_lock_gt[:, 3] * ground_lock_gt[:, 4]) > 200)
-                # ground_lock_reamin_flag = (ground_lock_bottom_flag & ground_lock_area_flag)
-                ground_lock_filter_gt = ground_lock_gt[ground_lock_area_flag]
+                ground_lock_area_flag = (ground_lock_gt[:, 3]*ground_lock_gt[:, 4]) > 25
+                ground_lock_filtered = ground_lock_gt[ground_lock_area_flag]
+                remain_ann.append(ground_lock_filtered)
 
-                # for weel rod,speed_bump
-                weel_wod_flag = (gt[:, 0] == 9)
-                speed_bump_flag = (gt[:, 0] == 10)
-                weel_rods_flag = (weel_wod_flag + speed_bump_flag)
-                weel_rods_gt = gt[weel_rods_flag]
+                # for kp as det
+                for kp_ind in range(9, 13):
+                    kp_as_det = (gt[:, 0] == kp_ind)
+                    kp_as_det_gt = gt[kp_as_det]
+                    kp_as_det_area_flag = (kp_as_det_gt[:, 3]*kp_as_det_gt[:, 4]) > 64
+                    kp_as_det_filtered = kp_as_det_gt[kp_as_det_area_flag]
+                    remain_ann.append(kp_as_det_filtered)
 
-                # weel_rods_bottom = ((weel_rods_gt[:,2] + (weel_rods_gt[:,4]/2)) > filter_height)
-                weel_rods_height_flag = (weel_rods_gt[:, 4] > 9)
-                weel_rods_width_flag = (weel_rods_gt[:, 3] > 9)
-                weel_rods_filter_gt = weel_rods_gt[(weel_rods_height_flag & weel_rods_width_flag)]
-                cat_target = torch.cat((vehicles_filtered, pedenstrain_filter_gt,
-                                        cones_filter_gt, weel_rods_filter_gt), 0)
+                cat_target = torch.cat(remain_ann, 0)
                 #cat_target = torch.cat((vehicles_filtered, pedenstrain_filter_gt, cones_filter_gt), 0)
                 reamin_num = cat_target.shape[0]
                 new_target[batch, :reamin_num, :] = cat_target
@@ -366,7 +376,7 @@ class Exp(BaseExp):
             name="images" if not testdev else "test2017",
             img_size=self.test_size,
             preproc=ValTransform(legacy=legacy),
-            filter=True,
+            is_val=True
         )
 
         if is_distributed:

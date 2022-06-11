@@ -13,4 +13,4 @@ class Exp(MyExp):
         self.depth = 0.33
         self.width = 0.50
         self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
-        self.output_dir = "./YOLOX_outputs20220530_kp_as_det"
+        self.output_dir = "./YOLOX_outputs20220611_kp_as_det_turning_2"

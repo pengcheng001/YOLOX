@@ -144,12 +144,22 @@ def random_affine(
     return img, targets
 
 
-def _mirror(image, boxes, kepoints, prob=0.5):
+def _mirror(image, boxes, kepoints, labels, prob=0.5):
     _, width, _ = image.shape
     if random.random() < prob:
         # if True:
         image = image[:, ::-1]
         boxes[:, 0::2] = width - boxes[:, 2::-2]
+        # for kp det
+        kp1_det_flag = (labels == 9)
+        kp2_det_flag = (labels == 10)
+        kp3_det_flag = (labels == 11)
+        kp4_det_flag = (labels == 12)
+
+        labels[kp1_det_flag] = 10
+        labels[kp2_det_flag] = 9
+        labels[kp3_det_flag] = 12
+        labels[kp4_det_flag] = 11
         res_temp = np.zeros(kepoints.shape)
         kepoints[:, 0::3] = width - kepoints[:, 0::3]
         res_temp[:, 0:3] = kepoints[:, 3:6]
@@ -157,7 +167,7 @@ def _mirror(image, boxes, kepoints, prob=0.5):
         res_temp[:, 6:9] = kepoints[:, 9:12]
         res_temp[:, 9:12] = kepoints[:, 6:9]
         kepoints = res_temp
-    return image, boxes, kepoints
+    return image, boxes, kepoints, labels
 
 
 def preproc(img, input_size, swap=(2, 0, 1)):
@@ -211,7 +221,7 @@ class TrainTransform:
         if random.random() < self.hsv_prob:
             augment_hsv(image)
         # image_t, boxes = _mirror(image, boxes, self.flip_prob)
-        image_t, boxes, keypoints = _mirror(image, boxes, keypoints, self.flip_prob)
+        image_t, boxes, keypoints, labels = _mirror(image, boxes, keypoints, labels, self.flip_prob)
 
         height, width, _ = image_t.shape
         image_t, r_ = preproc(image_t, input_dim)
