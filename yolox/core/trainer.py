@@ -98,7 +98,7 @@ class Trainer:
         targets = targets.to(self.data_type)
         targets.requires_grad = False
         inps, targets = self.exp.preprocess(inps, targets, self.input_size)
-        targets = self.exp.filter_bbox(inps, targets)
+        # targets = self.exp.filter_bbox(inps, targets)
         data_end_time = time.time()
 
         with torch.cuda.amp.autocast(enabled=self.amp_training):

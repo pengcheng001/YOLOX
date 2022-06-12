@@ -37,7 +37,7 @@ class Exp(BaseExp):
         # self.random_size = (14, 26)
         self.data_dir = None
         self.train_ann = "remain_category_train.json"
-        self.val_ann = "remain_category_train.json"
+        self.val_ann = "remain_category_val.json"
 
         # --------------- transform config ----------------- #
         self.mosaic_prob = 1.0
@@ -55,7 +55,7 @@ class Exp(BaseExp):
         self.warmup_epochs = 5
         self.max_epoch = 200
         self.warmup_lr = 0
-        self.basic_lr_per_img = 0.01 / 256.0
+        self.basic_lr_per_img = 0.01 / 128.0
         self.scheduler = "yoloxwarmcos"
         self.no_aug_epochs = 80
         self.min_lr_ratio = 0.005
@@ -208,7 +208,7 @@ class Exp(BaseExp):
         不搞减速带了，不搞挡轮杆了，所以类别少了两类，一共9类，最后加4个车辆点的bbox，就是
         13个类别。其实原来挡轮杆和减速带的类别id是10（9），11（10）
         '''
-        filter_on = True
+        filter_on = False
         if filter_on:
             batch_size = target.shape[0]
             new_target = target.new_zeros(target.shape)
