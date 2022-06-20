@@ -32,7 +32,7 @@ class COCOEvaluator:
     """
 
     def __init__(
-        self, dataloader, img_size, confthre, nmsthre, num_classes, testdev=False
+        self, dataloader, img_size, confthre, nmsthre, num_classes, testdev=False, filter_min_area=0,
     ):
         """
         Args:
@@ -49,6 +49,7 @@ class COCOEvaluator:
         self.nmsthre = nmsthre
         self.num_classes = num_classes
         self.testdev = testdev
+        self.filter_min_area = filter_min_area
 
     def evaluate(
         self,
@@ -134,6 +135,42 @@ class COCOEvaluator:
         synchronize()
         return eval_results
 
+    def convert_coco_json_to_filter_format(self, coco_api):
+        img_ids, anns, imgs = self.read_coco(coco_api)
+        ann_list = []
+        for i in range(len(img_ids)):
+            img_id = img_ids[i]
+            img_info = imgs[i]
+            img_h = img_info['height']
+            img_w = img_info['width']
+            scale = min(
+                self.img_size[0] / float(img_h), self.img_size[1] / float(img_w)
+            )
+            for ann in anns[i]:
+                x, y, w, h = ann['bbox']
+                label = ann['category_id']
+                w_t = w * scale
+                h_t = h * scale
+                area = w_t * h_t
+                if area < self.filter_min_area:
+                    continue
+                gt_temp = {
+                    "image_id": int(img_id),
+                    "category_id": label,
+                    "bbox": [x, y, w, h],
+                    "score": 0.0,
+                    "segmentation": [],
+                }
+                ann_list.append(gt_temp)
+        return ann_list
+
+    def read_coco(self, coco_api):
+        # coco_api = COCO(json_file)
+        img_ids = sorted(coco_api.imgs.keys())
+        anns = [coco_api.imgToAnns[img_id] for img_id in img_ids]
+        imgs = coco_api.loadImgs(img_ids)
+        return img_ids, anns, imgs
+
     def convert_to_coco_format(self, outputs, info_imgs, ids):
         data_list = []
         for (output, img_h, img_w, img_id) in zip(
@@ -151,7 +188,14 @@ class COCOEvaluator:
             )
             bboxes /= scale
             bboxes = xyxy2xywh(bboxes)
-
+            w = bboxes[:, 2]
+            h = bboxes[:, 3]
+            w_t = w * scale
+            h_t = h * scale
+            area = w_t * h_t
+            slected_flag = (area >= self.filter_min_area)
+            bboxes = bboxes[slected_flag]
+            output = output[slected_flag]
             cls = output[:, 6]
             scores = output[:, 4] * output[:, 5]
             for ind in range(bboxes.shape[0]):
@@ -210,8 +254,11 @@ class COCOEvaluator:
                 from pycocotools.cocoeval import COCOeval
 
                 logger.warning("Use standard COCOeval.")
-
-            cocoEval = COCOeval(cocoGt, cocoDt, annType[1])
+            cocoGt_val = self.convert_coco_json_to_filter_format(cocoGt)
+            _, tmp = tempfile.mkstemp()
+            json.dump(cocoGt_val, open(tmp, "w"))
+            cocoGt_val = cocoGt.loadRes(tmp)
+            cocoEval = COCOeval(cocoGt_val, cocoDt, annType[1])
             cocoEval.evaluate()
             cocoEval.accumulate()
             redirect_string = io.StringIO()

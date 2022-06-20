@@ -224,26 +224,6 @@ class COCODataset(Dataset):
             y1 = np.max((0, obj["bbox"][1]))
             x2 = np.min((width, x1 + np.max((0, obj["bbox"][2]))))
             y2 = np.min((height, y1 + np.max((0, obj["bbox"][3]))))
-            # w = np.max((0, obj["bbox"][2]))
-            # h = np.max((0, obj["bbox"][3]))
-            # if obj["category_id"] > self.class_num:
-            #     continue
-            # bbox_h = y2 - y1 + 1
-            # bbox_w = x2 - x1 + 1
-            # input_h = self.img_size[0]
-            # input_w = self.img_size[1]
-            # h_size = bbox_h*(input_h/height)
-            # w_size = bbox_w*(input_w/width)
-            # if obj["category_id"] == 1 or obj["category_id"] == 2 or obj["category_id"] == 10 or obj["category_id"] == 4 or obj["category_id"] == 3 or obj["category_id"] == 9:
-            #     max(h_size, w_size) <= 10
-            #     continue
-            # elif obj["category_id"] == 11:
-            #     bbox_center_y = (y1+y2)
-            #     if bbox_center_y < (height/3):
-            #         continue
-            # else:
-            #     max(h_size, w_size) <= 5
-            #     continue
             if obj["area"] > 0 and x2 >= x1 and y2 >= y1:
                 bbox_h = y2 - y1 + 1
                 bbox_w = x2 - x1 + 1
@@ -264,7 +244,7 @@ class COCODataset(Dataset):
                         assert len(obj['keypoints']) == 4
                         for kp_ind in range(4):
                             assert len(obj['keypoints'][kp_ind]) == 3
-                            if obj['keypoints'][kp_ind][2] == 1:
+                            if obj['keypoints'][kp_ind][2] == 1 and obj['category_id'] == 1:  # only using vechile
                                 kp_bbox_rad_h = bbox_h / 4
                                 kp_bbox_rad_w = bbox_w / 4
                                 kp_bbox = [
