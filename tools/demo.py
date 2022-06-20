@@ -256,7 +256,7 @@ class Predictor(object):
         img_height = img_info['height']
         img_width = img_info['width']
         if output is None:
-            return img, ""
+            return img, "", False
         bboxes = output[:, 0:4]
         keypoint_reg = output[:, 6:14]
         keypoint_cls = output[:, 14:18]
@@ -267,6 +267,7 @@ class Predictor(object):
         vis_res = vis(img, bboxes, scores, cls, cls_conf,
                       self.cls_names, keypoint_reg, keypoint_cls)
         lines = ''
+        have_cone = False
         if True:
             for i in range(len(bboxes)):
                 category_id = int(cls[i] + 1)
@@ -288,7 +289,10 @@ class Predictor(object):
                 y1 = bboxes[i][1]
                 x2 = bboxes[i][2]
                 y2 = bboxes[i][3]
-                lines += "{},{},{},{},{},{},".format(category_id, score, x1, y1, x2, y2)
+                if int(category_id) == 5:
+                    have_cone = True
+                lines += "{},{},{},{},{},{},{},{},".format(img_height,
+                                                           img_width, category_id, score, x1, y1, x2, y2)
                 for j in range(4):
                     if keypoint_cls[i][j] == 1:
                         lines += "{},{},{}, ".format(
@@ -298,7 +302,7 @@ class Predictor(object):
                             0, 0, 0, 0, 0)
                 lines += "\n"
 
-        return vis_res, lines
+        return vis_res, lines, have_cone
 
 
 def visual_kp_det(img, kp_det, img_info, cls_conf=0.25):
@@ -369,7 +373,7 @@ def image_demo(predictor, vis_folder, csv_folder, path, current_time, save_resul
             outputs, kp_det, img_info = predictor.inference(image_name, post_pix)
             match_result = match_keypoints(outputs[0], kp_det[0], 0.25, img_info, is_merge=True)
 
-            result_image, res_lines = predictor.visual_det_kp(
+            result_image, res_lines, have_cone = predictor.visual_det_kp(
                 match_result, img_info, predictor.confthre, filter_15pixel, 15.0)
             base_file_name = image_name[len(path)+1:]
             base_sub_dir = os.path.split(base_file_name)[0]
@@ -383,6 +387,7 @@ def image_demo(predictor, vis_folder, csv_folder, path, current_time, save_resul
                 save_file_name = os.path.join(save_file_name, os.path.basename(image_name))
                 post_pix["det_res_path"] = save_file_name
                 # logger.info("Saving detection result in {}".format(save_file_name))
+                # if have_cone:
                 cv2.imwrite(save_file_name, result_image)
             if True:
                 image_name_pre = os.path.splitext(os.path.basename(image_name))[0]
